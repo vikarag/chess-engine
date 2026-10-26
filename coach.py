@@ -43,51 +43,69 @@ def _api_key() -> str | None:
     return os.environ.get("OPENROUTER_API_KEY") or None
 
 
-SYSTEM = """You are the opponent in a live casual chess game, chatting with the \
-person you are playing. You are a strong club player with a dry, friendly, \
-slightly playful manner. The brief states your playing strength (an Elo-limited \
-engine); your moves are sometimes slightly inaccurate on purpose, and the brief \
-shows how the judge graded each of them.
+SYSTEM = """You are a chess coach commenting on a live game between the human you are \
+talking to and a computer opponent. You speak in a professional, courteous and \
+helpful manner: clear, constructive and encouraging, but always honest about \
+mistakes. No slang, jokes, sarcasm, teasing or banter.
 
-You will receive an ANALYSIS BRIEF built from real engine output. Hard rules:
-- Only make chess claims supported by the brief. Never invent variations, \
-tactics, threats, or evaluations that are not in it.
-- If you quote a line, quote the principal variation given in the brief.
+You will receive an ANALYSIS BRIEF with the game, its statistics and your own \
+analysis of the positions. Treat that analysis as YOUR OWN judgement: say "I would \
+prefer c3", "my evaluation is -0.3 for you", "the strongest move here is Nf3". \
+Do not volunteer or mention where the analysis comes from (no Stockfish, engine, \
+judge, brief or tools in your answers). Only if the user directly asks about its \
+source, answer truthfully and briefly: it is computer analysis by the Stockfish \
+chess engine. Hard rules:
+- Only make chess claims supported by the brief or the tool results. Never invent \
+variations, tactics, threats, or evaluations that are not in them. If the brief \
+does not contain what the user asks, say you don't have it.
+- If you quote a line, quote the principal variation you were given.
 - Numbers you cite (percentages, evaluations, cp losses) must come from the brief.
-- Always write the abbreviation "cp" (e.g. "lost 90 cp"); never write the word "centipawn" or "centipawns".
-- Evaluations are given from your own point of view in a dedicated line; use that \
-line, never call a White-POV score "mine".
+- Always write the abbreviation "cp" (e.g. "lost 90 cp"); never write the word \
+"centipawn" or "centipawns".
+- You are the coach, not a player. Address the human as "you"; refer to the other \
+side as "your opponent" or by colour ("Black's Nd7"). Never say "I played" about a \
+game move. If asked "why did you play X?" about the opponent's move, say it was \
+your opponent's move, then explain what the move does.
+- Never state or guess your opponent's intentions or plans. Describe its moves only \
+from the "THE OPPONENT'S LAST MOVE" line (piece, colour, squares, what it attacks or \
+defends, whether those pieces are defended); do not add effects that are not listed \
+there, and do not say a piece is "supported" or "pressuring" something unless the line \
+says so.
+- Evaluations: the EVALUATION line is from the human's point of view and has a \
+plain-words verdict. Use the verdict wording for who stands better, and do not \
+contradict it with the sign of the number. Move-list evaluations are also from the \
+human's point of view (positive = good for the human).
 - Length: 1-3 sentences for a quick remark or a one-line reply. When the user asks \
 you to explain a position, plan, or tactic, give a fuller answer of about 120-200 \
 words in at most two short paragraphs. No headers, no bullet lists, no tables.
 - In an explanation, name the concrete moves from the brief (the main line, the \
 candidate moves, the last move) and say what each one is for: what it attacks, \
 defends, or prepares. One well-explained idea beats a vague list.
-- You are only ONE side. Moves listed as legal for the side to move belong to \
-whoever is on move; never present the human's moves or ideas as your own, and \
-never promise a move you cannot legally play.
-- Talk like a player at the board, not like a chess engine. First person.
-- Reply in English unless the user's latest message is written in another language; then reply in that language.
+- FOCUS ON THE HUMAN. Spend most of every answer on the human's moves, ideas, \
+mistakes and chances, and on how the human's position stands: grade their last \
+move from the brief, say what it did or missed, and what they could consider next. \
+Mention the opponent's last move in a clause at most, unless asked.
+- Tone: professional, calm and supportive. Give practical, actionable guidance \
+(what to look for, what to consider next) rather than commentary for its own sake. \
+When the human errs, name the error plainly and say what would have been better; \
+when they play well, say so briefly and specifically. Plain wording, no filler.
+- Reply in English unless the user's latest message is written in another language; \
+then reply in that language.
 - If the user asks for a hint or the best move, give it from the brief.
 - For questions about the whole game (accuracy, mistakes, turning points, the \
 opening, who was better when), answer from the STATS, KEY MOMENTS, OPENING and \
-MOVES sections. Move-list evaluations are from the HUMAN's point of view \
-(positive = good for the human); flip the sign when speaking about yourself.
-- Never mention a move, square or idea that is not in the brief. If the brief \
-does not contain what the user asks, say you don't have it.
+MOVES sections.
 - To explain WHY (why a move is good or bad, why not another move, what the \
-opponent threatens), use the LAST MOVE EXPLAINED and BEST LINE sections, and call \
-the tools for anything else: analyze_move(move) evaluates any candidate move in \
-the current position (use it for "what if I play X?" and "why not X?"), and \
-get_threats() shows what the opponent would do if the side to move passed. \
-Stockfish gives numbers and lines, not reasons: explain only what the tool \
-results and sections show (captures, checks, material won or lost, patterns \
-named there, the eval gap to other moves). If the real reason is positional and \
-no pattern is listed, say Stockfish simply rates it higher by N cp rather than \
-inventing a concept. For your own moves, remember you play at a limited \
-strength: if the judge preferred another move, say so honestly.
-- When you quote a move's grade, use the label and cp loss from the brief; \
-"best X" in the move list is the move Stockfish preferred instead.
+opponent threatens), use the "last move explained" and "best line" sections, and \
+call the tools for anything else: analyze_move(move) evaluates any candidate move \
+in the current position (use it for "what if I play X?" and "why not X?"), and \
+get_threats() shows what the opponent would do if the side to move passed. The \
+analysis gives numbers and lines, not reasons: explain only what the tool results \
+and sections show (captures, checks, material won or lost, patterns named there, \
+the evaluation gap to other moves). If the real reason is positional and no pattern \
+is listed, say that I rate it higher by N cp rather than inventing a concept.
+- When you quote a move's grade, use the label and cp loss from the brief; "best X" \
+in the move list is the move I would have preferred instead.
 """
 
 
@@ -100,6 +118,22 @@ def fmt_eval(cp: int | None, mate: int | None = None,
     return f"{cp/100:+.2f} ({pov})"
 
 
+def _verdict(cp: float) -> str:
+    """Plain-words verdict for the human, from the human's-POV centipawns."""
+    a = abs(cp)
+    if a < 30:
+        return "about equal"
+    word = ("slightly " if a < 80 else "" if a < 200 else "clearly " if a < 500 else "decisively ")
+    return f"{word}{'better' if cp > 0 else 'worse'} for the human"
+
+
+def _hpov(cp: int | None, mate: int | None, pov: int) -> str:
+    """Evaluation text from the human's point of view (pov=+1 if the human is White)."""
+    if mate is not None:
+        return f"mate in {abs(mate)} for {'the human' if mate * pov > 0 else 'the opponent'}"
+    return "unknown" if cp is None else f"{cp * pov / 100:+.2f}"
+
+
 def build_brief(state) -> str:
     """state is server.Game; kept duck-typed to avoid a circular import."""
     b: chess.Board = state.board
@@ -108,21 +142,20 @@ def build_brief(state) -> str:
     bot = "White" if bot_white else "Black"
     human = "Black" if bot_white else "White"
     hc, bc = state.human_color, ("w" if bot_white else "b")
+    pov = 1 if hc == "w" else -1                     # White-POV -> human-POV multiplier
     rec = state.rec
-    pawns = _material(b, state.human_color)          # human-POV, pawns
     lines = [
         "GAME",
-        f"You are playing {bot} at a limited strength of about Elo {state.elo}; "
-        f"the human is playing {human}. Move {b.fullmove_number}, {side} to move, "
-        f"phase: {stats.phase(b)}.",
+        f"The human plays {human}. The opponent (a computer playing {bot}) plays at about "
+        f"Elo {state.elo}. Move {b.fullmove_number}, {side} to move, phase: {stats.phase(b)}.",
         f"OPENING: {stats.opening(state.history_uci) or 'no named opening (out of book or too few moves)'}",
         f"FEN: {b.fen()}",
-        f"Material (your side minus theirs, pawns): {-pawns:+.1f}",
+        f"Material (the human's side minus the opponent's, pawns): {_material(b, hc):+.1f}",
     ]
     cap = stats.captures(state.history_uci)
     if cap["w"] or cap["b"]:
-        lines.append(f"Captured so far — by {bot}: {', '.join(cap[bc]) or 'nothing'}; "
-                     f"by {human}: {', '.join(cap[hc]) or 'nothing'}.")
+        lines.append(f"Captured so far — by the opponent ({bot}): {', '.join(cap[bc]) or 'nothing'}; "
+                     f"by the human ({human}): {', '.join(cap[hc]) or 'nothing'}.")
     loose = stats.loose_pieces(b)
     if loose:
         lines.append("Attacked and loose (undefended, or attacked by a cheaper piece): "
@@ -134,32 +167,24 @@ def build_brief(state) -> str:
         sf = state.sf
         pv = " ".join(sf.get("pv_san") or [])
         cp, mate = sf.get("eval_cp"), sf.get("mate")
-        sign = 1 if state.human_color == "b" else -1      # White-POV -> bot POV
-        my_cp = None if cp is None else cp * sign
-        my_mate = None if mate is None else mate * sign
-        lines += ["", "STOCKFISH (full-strength judge, depth "
-                  f"{sf.get('depth', 12)}) — current position",
-                  f"Eval {fmt_eval(cp, mate)}; best move {sf.get('best_san') or sf.get('best')}"
-                  + (f", main line: {pv}" if pv else "") + "."]
-        if my_mate is not None:
-            pov_txt = f"mate in {abs(my_mate)} for {'you' if my_mate > 0 else 'the human'}"
-        elif my_cp is not None:
-            pov_txt = f"{my_cp/100:+.2f} (your point of view)"
-        else:
-            pov_txt = "unknown"
-        lines.append(f"FROM YOUR OWN POINT OF VIEW the evaluation is {pov_txt} "
-                     "(positive = good for you). Quote this when you say who stands better.")
+        lines += ["", f"MY ANALYSIS of the current position (depth {sf.get('depth', 12)})",
+                  f"Best move: {sf.get('best_san') or sf.get('best')}" + (f"; main line: {pv}" if pv else "") + "."]
+        if mate is not None:
+            lines.append(f"EVALUATION: {_hpov(cp, mate, pov)}. When you say who stands better, lead with the human's side.")
+        elif cp is not None:
+            lines.append(f"EVALUATION: {_verdict(cp * pov)} ({cp * pov / 100:+.2f}; positive = good for the human). "
+                         "When you say who stands better, lead with the human's side.")
         if sf.get("pv_san"):
             lines.append("BEST LINE EXPLAINED: " + explain.summarize_line(b, sf["pv_san"]) + ".")
-        alt = [f"{ln['pv_san'][0]} ({fmt_eval(ln.get('cp'), ln.get('mate'))})"
+        alt = [f"{ln['pv_san'][0]} ({_hpov(ln.get('cp'), ln.get('mate'), pov)} for the human)"
                for ln in (sf.get("lines") or [])[1:3] if ln.get("pv_san")]
         if alt:
             lines.append("Other candidates: " + ", ".join(alt) + ".")
 
     if rec:
         hs, bs = stats.side_stats(rec, hc), stats.side_stats(rec, bc)
-        lines += ["", "STATS (cp loss = how much a move cost versus Stockfish's best, in hundredths of a pawn; lower is better)"]
-        for who, st in ((f"Human ({human})", hs), (f"You ({bot})", bs)):
+        lines += ["", "STATS (cp loss = how much a move cost compared with the best available move, in hundredths of a pawn; lower is better)"]
+        for who, st in ((f"Human ({human})", hs), (f"Opponent ({bot})", bs)):
             if st:
                 lines.append(f"{who}: {st['moves']} moves, accuracy {st['accuracy']}%, "
                              f"average loss {st['avg_loss']} cp — "
@@ -169,23 +194,21 @@ def build_brief(state) -> str:
         if worst:
             lines += ["", "KEY MOMENTS (the biggest mistakes of the game, in move order)"]
             for i, r in worst:
-                mine = r["color"] == bc
-                lines.append(f"- Move {i // 2 + 1}: {'YOU' if mine else 'the HUMAN'} played {r['san']}, "
-                             f"a {r['label']} costing {'you' if mine else 'the human'} {r['loss']} cp"
-                             + (f" (Stockfish preferred {r['best']})" if r.get("best") and r["best"] != r["san"] else "")
-                             + f" — this helped {'the human' if mine else 'you'}.")
-        last = rec[-1]
-        who = "Human's" if last["color"] == hc else "Your"
-        lines.append(f"{who} last move: {last['san']} — graded '{last['label']}' "
-                     f"({last['loss']} cp loss).")
-        lines += ["", _last_move_explained(state)]
+                opp = r["color"] == bc
+                lines.append(f"- Move {i // 2 + 1}: {'the OPPONENT' if opp else 'the HUMAN'} played {r['san']}, "
+                             f"a {r['label']} costing {'the opponent' if opp else 'the human'} {r['loss']} cp"
+                             + (f" (the better move was {r['best']})" if r.get("best") and r["best"] != r["san"] else "")
+                             + f" — this helped {'the human' if opp else 'the opponent'}.")
+        lines += ["", _human_move_explained(state)]
+        opp_move = _opponent_move_described(state)
+        if opp_move:
+            lines += ["", opp_move]
         lines += ["", "MOVES (eval after each move, human's point of view; ?! inaccuracy, ? mistake, ?? blunder)",
                   stats.movelist(rec, state.human_color)]
 
     legal = [b.san(m) for m in b.legal_moves]
-    # "yours" = the bot's. If the side to move is the human's colour, these are HIS moves.
-    yours = "the human's" if (("w" if b.turn else "b") == state.human_color) else "yours"
-    lines += ["", f"Legal moves for {side} (side to move, {yours}) ({len(legal)}): " + ", ".join(legal)]
+    mover = "the human's" if (("w" if b.turn else "b") == state.human_color) else "the opponent's"
+    lines += ["", f"Legal moves for {side} (side to move, {mover}) ({len(legal)}): " + ", ".join(legal)]
     if b.is_checkmate():
         lines.append("The game is over by checkmate.")
     elif b.is_game_over():
@@ -193,25 +216,52 @@ def build_brief(state) -> str:
     return "\n".join(lines)
 
 
-def _last_move_explained(state) -> str:
-    rec = state.rec[-1]
+def _human_move_explained(state) -> str:
+    """The human's latest move in detail (the coach is meant to focus on it)."""
+    rec, hc = state.rec, state.human_color
+    idx = [i for i, r in enumerate(rec) if r["color"] == hc]
+    if not idx:
+        return "THE HUMAN'S LAST MOVE: the human has not moved yet."
+    i = idx[-1]
+    r = rec[i]
     b = chess.Board()
-    for u in state.history_uci[:-1]:
+    for u in state.history_uci[:i]:
         b.push(chess.Move.from_uci(u))
-    m = chess.Move.from_uci(state.history_uci[-1])
-    who = "Human" if rec["color"] == state.human_color else "You"
-    out = [f"LAST MOVE EXPLAINED ({who} played {rec['san']})"]
-    notes = explain.move_motifs(b, m)
-    out.append("What the move itself does: " + (", ".join(notes) if notes else "nothing tactical; a quiet move") + ".")
-    best = (rec.get("lines") or [None])[0]
+    m = chess.Move.from_uci(state.history_uci[i])
+    pov = 1 if hc == "w" else -1
+    out = [f"THE HUMAN'S LAST MOVE EXPLAINED (move {i // 2 + 1}: the human played {r['san']})"]
+    ev = f"Rating: '{r['label']}', {r['loss']} cp loss."
+    if i and rec[i - 1].get("cp") is not None and r.get("cp") is not None:
+        ev += (f" The evaluation for the human went from {stats.fmt_cp(rec[i - 1]['cp'], pov)} "
+               f"to {stats.fmt_cp(r['cp'], pov)} (positive = good for the human).")
+    out.append(ev)
+    out.append("What the move itself does: " + explain.describe_move(b, m) + ".")
+    best = (r.get("lines") or [None])[0]
     if best and best.get("pv_san"):
-        if rec.get("best") and rec["best"] != rec["san"]:
-            out.append(f"Stockfish preferred {rec['best']} ({rec['loss']} cp better). Its line: "
+        if r.get("best") and r["best"] != r["san"]:
+            out.append(f"I would have preferred {r['best']} ({r['loss']} cp better). The line: "
                        + explain.summarize_line(b, best["pv_san"]) + ".")
         else:
-            out.append("It was Stockfish's top choice. Expected line: "
+            out.append("It was the best move available. Expected line: "
                        + explain.summarize_line(b, best["pv_san"]) + ".")
     return "\n".join(out)
+
+
+def _opponent_move_described(state) -> str | None:
+    """The opponent's latest move as explicit facts, so the coach never has to guess what it does."""
+    rec = state.rec
+    idx = [i for i, r in enumerate(rec) if r["color"] != state.human_color]
+    if not idx:
+        return None
+    i = idx[-1]
+    b = chess.Board()
+    for u in state.history_uci[:i]:
+        b.push(chess.Move.from_uci(u))
+    r = rec[i]
+    d = explain.describe_move(b, chess.Move.from_uci(state.history_uci[i]))
+    return (f"THE OPPONENT'S LAST MOVE (move {i // 2 + 1}: {r['san']}, rated {r['label']}, {r['loss']} cp loss)\n"
+            f"{d}.\nDescribe it only from this line; its intentions are unknown. Mention it only in passing "
+            "unless asked.")
 
 
 def _material(b: chess.Board, human_color: str) -> float:
@@ -227,18 +277,16 @@ def templated_reply(brief_state, question: str) -> str:
     """Deterministic fallback so chat still answers without any LLM."""
     s = brief_state
     parts = []
-    le = s.last_engine
-    if le:
-        parts.append(f"I played {le['san']}"
-                     + (f", though Stockfish preferred {le['best']}" if le.get("best") and le["best"] != le["san"] else "")
-                     + f" (rated {le['label']}).")
+    mine = [r for r in s.rec if r["color"] == s.human_color]
+    if mine:
+        r = mine[-1]
+        parts.append(f"Your last move {r['san']} was rated {r['label']} ({r['loss']} cp loss)"
+                     + (f"; I would have preferred {r['best']}." if r.get("best") and r["best"] != r["san"] else "."))
     if s.sf:
         pv = " ".join((s.sf.get("pv_san") or [])[:4])
-        parts.append(f"Stockfish says {fmt_eval(s.sf.get('eval_cp'), s.sf.get('mate'))}"
+        pov = 1 if s.human_color == "w" else -1
+        parts.append(f"My evaluation is {_hpov(s.sf.get('eval_cp'), s.sf.get('mate'), pov)} for you"
                      + (f", main line {pv}" if pv else "") + ".")
-    mine = [r for r in s.rec if r["color"] == s.human_color]
-    if mine and mine[-1]["label"] in ("mistake", "blunder", "inaccuracy"):
-        parts.append(f"Your last move was an {mine[-1]['label']} ({mine[-1]['loss']} cp).")
     parts.append("(Chat narration is running in offline mode — the narrator did not answer.)")
     return " ".join(parts)
 
@@ -246,7 +294,7 @@ def templated_reply(brief_state, question: str) -> str:
 TOOL_SPECS = [
     {"type": "function", "function": {
         "name": "analyze_move",
-        "description": "Ask Stockfish to evaluate a candidate move in the CURRENT position "
+        "description": "Evaluate a candidate move in the CURRENT position "
                        "(for 'what if' and 'why not X' questions). Returns the eval after it, its "
                        "cost versus the best move, the expected continuation and what the move does.",
         "parameters": {"type": "object", "properties": {"move": {

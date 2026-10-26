@@ -65,19 +65,37 @@ def summarize_line(board: chess.Board, sans: list[str], max_plies: int = 8) -> s
     return " — ".join(parts)
 
 
+def _pn(b: chess.Board, sq: int) -> str:
+    """Explicit piece name with colour and square: 'white knight on c3'."""
+    p = b.piece_at(sq)
+    return f"{'white' if p.color else 'black'} {NAME[p.piece_type]} on {chess.square_name(sq)}"
+
+
+CENTRE = {chess.D4, chess.E4, chess.D5, chess.E5}
+
+
 def move_motifs(board: chess.Board, move: chess.Move) -> list[str]:
-    """Tactical facts about one move, played from `board` (the position before it)."""
+    """Explicit facts about one move, played from `board` (the position before it)."""
     b = board.copy(stack=False)
     mover = b.turn
     piece = b.piece_at(move.from_square)
     notes = []
     if b.is_castling(move):
-        notes.append("castles")
+        notes.append("castles" + (" kingside" if chess.square_file(move.to_square) > 4 else " queenside"))
     if b.is_capture(move):
-        victim = chess.PAWN if b.is_en_passant(move) else b.piece_type_at(move.to_square)
-        notes.append(f"captures a {NAME[victim]}")
+        if b.is_en_passant(move):
+            notes.append("captures a pawn en passant")
+        else:
+            notes.append(f"captures the {_pn(b, move.to_square)}")
     if move.promotion:
         notes.append(f"promotes to a {NAME[move.promotion]}")
+    back_rank = 0 if mover else 7
+    if (piece.piece_type in (chess.KNIGHT, chess.BISHOP)
+            and chess.square_rank(move.from_square) == back_rank
+            and chess.square_rank(move.to_square) != back_rank):
+        notes.append(f"develops the {NAME[piece.piece_type]}")
+    if piece.piece_type == chess.PAWN and move.to_square in CENTRE and not b.is_capture(move):
+        notes.append("puts a pawn in the centre")
     loose_before = set(stats.loose_pieces(b))
     pinned_before = {sq for sq in chess.SQUARES if b.piece_at(sq) and b.is_pinned(not mover, sq)}
     att_before = {sq: set(b.attackers(mover, sq)) for sq in chess.SQUARES
@@ -89,25 +107,33 @@ def move_motifs(board: chess.Board, move: chess.Move) -> list[str]:
         notes.append("gives double check" if len(b.checkers()) > 1 else "gives check")
 
     to = move.to_square
-    targets = []
+    targets, attacked = [], []         # attacked = all enemy pieces hit; targets = those worth winning
     for sq in b.attacks(to):
         p = b.piece_at(sq)
         if p and p.color != mover and p.piece_type != chess.KING:
-            if VAL[p.piece_type] > VAL[piece.piece_type] or not b.attackers(not mover, sq):
-                targets.append(f"{NAME[p.piece_type]} on {chess.square_name(sq)}")
+            undefended = not b.attackers(not mover, sq)
+            text = _pn(b, sq) + (" (undefended)" if undefended else " (defended)")
+            attacked.append(text)
+            if VAL[p.piece_type] > VAL[piece.piece_type] or undefended:
+                targets.append(text)
     if len(targets) + (1 if b.is_check() else 0) >= 2 and targets:
-        notes.append("forks " + (" and ".join(targets) + (" and the king" if b.is_check() else "")))
-    elif targets:
-        notes.append("attacks the " + targets[0])
+        notes.append("forks the " + " and the ".join(targets) + (" and the king" if b.is_check() else ""))
+    elif attacked:
+        notes.append("attacks the " + " and the ".join(attacked[:3]))
+    protected = [_pn(b, sq) for sq in b.attacks(to)
+                 if (p := b.piece_at(sq)) and p.color == mover and p.piece_type != chess.KING
+                 and b.attackers(not mover, sq)]
+    if protected:
+        notes.append("defends the " + " and the ".join(protected[:2]) + ", which is under attack")
 
     for sq in chess.SQUARES:
         p = b.piece_at(sq)
         if p and p.color != mover and p.piece_type != chess.KING:
             if b.is_pinned(not mover, sq) and sq not in pinned_before:
-                notes.append(f"pins the {NAME[p.piece_type]} on {chess.square_name(sq)} to its king")
+                notes.append(f"pins the {_pn(b, sq)} to its king")
             new = (set(b.attackers(mover, sq)) - {to}) - att_before.get(sq, set())
             if new and (VAL[p.piece_type] >= 3 or not b.attackers(not mover, sq)):
-                notes.append(f"discovers an attack on the {NAME[p.piece_type]} on {chess.square_name(sq)}")
+                notes.append(f"discovers an attack on the {_pn(b, sq)}")
 
     loose_after = set(stats.loose_pieces(b))
     me = _who(mover)
@@ -120,10 +146,20 @@ def move_motifs(board: chess.Board, move: chess.Move) -> list[str]:
         elif not any(tail in n for n in notes):
             notes.append(f"attacks the loose {tail}")
     for x in sorted(loose_before - loose_after):
-        if x.startswith(me) and not x.endswith(moved_from):
-            notes.append("saves its " + x.split(" ", 1)[1])
+        tail = x.split(" ", 1)[1]
+        if x.startswith(me) and not x.endswith(moved_from) and not any(tail.lower() in n.lower() for n in notes):
+            notes.append("saves its " + tail)
     seen = []
     return [n for n in notes if not (n in seen or seen.append(n))]
+
+
+def describe_move(board: chess.Board, move: chess.Move) -> str:
+    """One explicit sentence: who moved what from where to where, and what it does."""
+    piece = board.piece_at(move.from_square)
+    base = (f"{_who(board.turn)}'s {NAME[piece.piece_type]} moves from "
+            f"{chess.square_name(move.from_square)} to {chess.square_name(move.to_square)}")
+    notes = move_motifs(board, move)
+    return base + (": " + "; ".join(notes) if notes else "; it has no immediate tactical effect (a quiet move)")
 
 
 def threats(sf, board: chess.Board, cur_sf: dict | None, human_color: str) -> str:
@@ -143,11 +179,11 @@ def threats(sf, board: chess.Board, cur_sf: dict | None, human_color: str) -> st
     after = ln["cp"] if ln["mate"] is None else (10000 if ln["mate"] > 0 else -10000)
     other = _who(not board.turn)
     first = chess.Move.from_uci(ln["pv"][0])
-    notes = move_motifs(b, first) if first in b.legal_moves else []
+    what = describe_move(b, first) if first in b.legal_moves else ""
     return (f"THREAT CHECK: if {_who(board.turn)} passed, {other} would play {ln['pv_san'][0]} "
             f"(line: {summarize_line(b, ln['pv_san'])}). Eval now {_fmt(cur, human_color)}, "
             f"with that threat executed {_fmt(after, human_color)} (human's point of view). "
-            + (f"That move {', '.join(notes)}." if notes else ""))
+            + (what + "." if what else ""))
 
 
 def analyze_move(sf, board: chess.Board, text: str, cur_sf: dict | None, human_color: str) -> str:
@@ -162,7 +198,7 @@ def analyze_move(sf, board: chess.Board, text: str, cur_sf: dict | None, human_c
         legal = ", ".join(board.san(x) for x in board.legal_moves)
         return f"'{text}' is not a legal move here. Legal moves: {legal}."
     san, mover = board.san(m), board.turn
-    notes = move_motifs(board, m)
+    what = describe_move(board, m)
     b = board.copy(stack=False)
     b.push(m)
     best_san = (cur_sf or {}).get("best_san")
@@ -170,18 +206,18 @@ def analyze_move(sf, board: chess.Board, text: str, cur_sf: dict | None, human_c
                                        -10000 if cur_sf.get("mate") is not None else cur_sf.get("eval_cp"))
     if b.is_game_over(claim_draw=True):
         res = "checkmate" if b.is_checkmate() else "a draw"
-        return f"MOVE {san}: ends the game in {res}. " + (f"It {', '.join(notes)}." if notes else "")
+        return f"MOVE {san}: ends the game in {res}. {what}."
     r = sf.analyse(b.fen(), depth=12, multipv=1)
     ln = r["lines"][0] if r["lines"] else None
     after = None if not ln else (ln["cp"] if ln["mate"] is None else (10000 if ln["mate"] > 0 else -10000))
     out = [f"MOVE {san} (evals from the human's point of view, positive = good for the human)"]
     out.append(f"eval after it {_fmt(after, human_color)}"
-               + (f"; Stockfish's best move here is {best_san} at {_fmt(best_cp, human_color)}" if best_san else ""))
+               + (f"; the best move here is {best_san} at {_fmt(best_cp, human_color)}" if best_san else ""))
     if after is not None and best_cp is not None:
         sign = 1 if mover else -1
         loss = int(max(0, min(sign * best_cp, 9000) - min(sign * after, 9000)))
         if san == best_san:
-            out.append("this is Stockfish's best move")
+            out.append("this is the best move")
         elif sign * after <= -9000:
             out.append("it walks into a forced mate")
         elif sign * best_cp >= 9000:
@@ -190,21 +226,30 @@ def analyze_move(sf, board: chess.Board, text: str, cur_sf: dict | None, human_c
             out.append(f"it costs {loss} cp compared with the best move ({label_loss(loss)})")
     if ln:
         out.append(f"expected continuation: {summarize_line(b, ln['pv_san'])}")
-    if notes:
-        out.append(f"what the move itself does: {', '.join(notes)}")
+    out.append(f"what the move itself does: {what}")
     return out[0] + ": " + ". ".join(out[1:]) + "."
 
 
 if __name__ == "__main__":      # self-check: python explain.py (needs no engine)
-    # Nxe5 wins a pawn and attacks the c6 knight's... plain capture + attack facts
     b = chess.Board("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3")
-    assert "captures a pawn" in move_motifs(b, b.parse_san("Nxe5"))
+    assert "captures the black pawn on e5" in move_motifs(b, b.parse_san("Nxe5"))
+    # Black's Nc6 attacks White's e5 pawn (the old brief gave no description at all)
+    d = describe_move(chess.Board("rnbqkb1r/ppp1pppp/3p1n2/4P3/3P4/8/PPP2PPP/RNBQKBNR b KQkq - 0 3"), chess.Move.from_uci("b8c6"))
+    assert d.startswith("Black's knight moves from b8 to c6") and "develops the knight" in d \
+        and "the white pawn on e5 (defended)" in d, d
+    # ...whereas in the normal Open Game Nc6 defends Black's own e5 pawn
+    d2 = describe_move(chess.Board("rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"), chess.Move.from_uci("b8c6"))
+    assert "defends the black pawn on e5" in d2 and "saves" not in d2, d2
     # classic knight fork of king and queen: Nc7+ attacks e8 and a8
     g = chess.Board("q3k3/8/8/3N4/8/8/8/4K3 w - - 0 1")
     mo = move_motifs(g, g.parse_san("Nc7+"))
     assert any(n.startswith("forks") for n in mo) and "gives check" in mo, mo
     assert "puts its knight on f6 en prise" in move_motifs(chess.Board("3qk3/8/8/8/4N3/8/8/4K3 w - - 0 1"), chess.Move.from_uci("e4f6"))
     assert "delivers checkmate" in move_motifs(chess.Board("6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1"), chess.Move.from_uci("a1a8"))
+    assert "puts a pawn in the centre" in move_motifs(chess.Board(), chess.Move.from_uci("e2e4"))
+    assert "castles kingside" in move_motifs(chess.Board("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"), chess.Move.from_uci("e1g1"))
+    q = describe_move(chess.Board("4k3/8/8/8/8/8/8/R3K3 w - - 0 1"), chess.Move.from_uci("a1a2"))
+    assert "no immediate tactical effect" in q, q
     s = summarize_line(b, ["Nxe5", "Nxe5", "d4"])
     assert "White takes a pawn (Nxe5)" in s and "Black takes a knight (Nxe5)" in s, s
     assert summarize_line(b, ["Bc4", "Bc5"]).endswith("material stays level")

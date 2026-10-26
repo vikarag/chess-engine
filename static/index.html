@@ -472,7 +472,10 @@ async function ask(text, silent = false){
 
 function maybeAutoComment(){
   if (!$('#chatty').checked || !S.engine || S.over) return;
-  ask(`You just played ${S.engine.san}. Comment on it in one or two sentences, as if at the board.`, true);
+  const g = S.grade;
+  ask(g && g.san
+    ? `Comment on my last move (${g.san}) and where I stand now, in two or three sentences. Say very little about the opponent's reply.`
+    : `The opponent just played ${S.engine.san}. Comment on it in one short sentence.`, true);
 }
 
 /* ---------------- controls ---------------- */
