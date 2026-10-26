@@ -132,7 +132,8 @@ def move_motifs(board: chess.Board, move: chess.Move) -> list[str]:
             undefended = not b.attackers(not mover, sq)
             text = _pn(b, sq) + (" (undefended)" if undefended else " (defended)")
             attacked.append(text)
-            if VAL[p.piece_type] > VAL[piece.piece_type] or undefended:
+            # the mover may be the king (no entry in VAL): it can only win undefended pieces, so count it as priceless
+            if VAL[p.piece_type] > VAL.get(piece.piece_type, 99) or undefended:
                 targets.append(text)
     if len(targets) + (1 if b.is_check() else 0) >= 2 and targets:
         notes.append("forks the " + " and the ".join(targets) + (" and the king" if b.is_check() else ""))
@@ -270,6 +271,9 @@ if __name__ == "__main__":      # self-check: python explain.py (needs no engine
     assert "delivers checkmate" in move_motifs(chess.Board("6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1"), chess.Move.from_uci("a1a8"))
     assert "puts a pawn in the centre" in move_motifs(chess.Board(), chess.Move.from_uci("e2e4"))
     assert "castles kingside" in move_motifs(chess.Board("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"), chess.Move.from_uci("e1g1"))
+    # a king move that attacks something used to crash (KeyError 6: the king has no value entry)
+    k = describe_move(chess.Board("4k3/8/8/8/8/3p4/8/4K3 w - - 0 1"), chess.Move.from_uci("e1e2"))
+    assert k.startswith("White's king moves from e1 to e2") and "black pawn on d3 (undefended)" in k, k
     q = describe_move(chess.Board("4k3/8/8/8/8/8/8/R3K3 w - - 0 1"), chess.Move.from_uci("a1a2"))
     assert "no immediate tactical effect" in q, q
     net, mate, first = line_net(b, ["Nxe5", "Nxe5", "d4"])

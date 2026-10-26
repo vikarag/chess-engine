@@ -11,6 +11,7 @@ import re
 import secrets
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 
 import chess
@@ -596,7 +597,8 @@ def chat(gid: str, req: ChatReq):
             _save(g)
             yield "data: " + json.dumps({"done": True}) + "\n\n"
         except Exception as e:
-            yield "data: " + json.dumps({"delta": f"\n[error: {e}]"}) + "\n\n"
+            traceback.print_exc()                   # full traceback goes to the service log
+            yield "data: " + json.dumps({"delta": f"\n[error: {type(e).__name__}: {e}]"}) + "\n\n"
             yield "data: " + json.dumps({"done": True}) + "\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream",
