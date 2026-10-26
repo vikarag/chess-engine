@@ -22,12 +22,12 @@
   .grow{flex:1}
   .app{display:grid;grid-template-columns:minmax(320px,1fr) 420px;gap:20px;align-items:start}
   @media(max-width:940px){
-    /* one column: drop the two column wrappers so every panel can be ordered; chat sits right above New game */
+    /* one column: drop the two column wrappers so every panel can be ordered: chat, then opponent and moves, then new game and saved games */
     .app{display:flex;flex-direction:column;align-items:stretch;gap:0}
     .app > div{display:contents}
     .app .panel{margin-top:14px !important}
     #cap-top{order:1} .boardbox{order:2} #cap-bot{order:3} .status{order:4}
-    #chatpanel{order:5} #newpanel{order:6} #savedpanel{order:7} #oppanel{order:8} #movespanel{order:9}
+    #chatpanel{order:5} #oppanel{order:6} #movespanel{order:7} #newpanel{order:8} #savedpanel{order:9}
   }
 
   /* ---- board ---- */
