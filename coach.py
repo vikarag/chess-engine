@@ -422,7 +422,8 @@ def _round(client, payload: dict, headers: dict):
     yield ("calls", [calls[i] for i in sorted(calls)])
 
 
-def stream_reply(state, question: str, history: list[dict], tools: dict | None = None) -> Iterator[str]:
+def stream_reply(state, question: str, history: list[dict], tools: dict | None = None,
+                 used: list | None = None) -> Iterator[str]:
     """Stream the narrator's answer. `tools` maps tool names to callables that run Stockfish."""
     key = _api_key()
     if not key:
@@ -472,6 +473,11 @@ def stream_reply(state, question: str, history: list[dict], tools: dict | None =
                                                  "function": {"name": c["name"], "arguments": c["arguments"] or "{}"}}
                                                 for c in calls]})
                     for c in calls:
+                        if used is not None:             # recorded with the answer, shown as a tag in the chat
+                            try:
+                                used.append({"name": c["name"], "args": json.loads(c["arguments"] or "{}")})
+                            except ValueError:
+                                used.append({"name": c["name"], "args": {}})
                         msgs.append({"role": "tool", "tool_call_id": c["id"],
                                      "content": _run_tool(tools or {}, c["name"], c["arguments"])})
                     continue

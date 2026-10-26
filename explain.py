@@ -205,6 +205,14 @@ def threats(sf, board: chess.Board, cur_sf: dict | None, human_color: str) -> st
             + (what + "." if what else ""))
 
 
+WHATIF_DEPTH = 16     # ~1-1.5 s for both searches on this CPU; one call per what-if question
+
+
+def _cpm(cp, mate):
+    """White-POV centipawns with mate mapped to +/-10000."""
+    return cp if mate is None else (10000 if mate > 0 else -10000)
+
+
 def analyze_move(sf, board: chess.Board, text: str, cur_sf: dict | None, human_color: str) -> str:
     """What-if: how good is this move here, and what happens after it?"""
     text = (text or "").strip()
@@ -220,13 +228,18 @@ def analyze_move(sf, board: chess.Board, text: str, cur_sf: dict | None, human_c
     what = describe_move(board, m)
     b = board.copy(stack=False)
     b.push(m)
-    best_san = (cur_sf or {}).get("best_san")
-    best_cp = None if not cur_sf else (10000 if (cur_sf.get("mate") or 0) > 0 else
-                                       -10000 if cur_sf.get("mate") is not None else cur_sf.get("eval_cp"))
+    # search the position and the candidate at the same, deeper depth: a depth-12 comparison was unstable
+    # (the same question could come back "fine" one time and "inaccuracy" the next)
+    root = sf.analyse(board.fen(), depth=WHATIF_DEPTH, multipv=1)
+    if root["lines"]:
+        best_san, best_cp = root["lines"][0]["pv_san"][0], _cpm(root["eval_cp"], root["mate"])
+    else:
+        best_san = (cur_sf or {}).get("best_san")
+        best_cp = None if not cur_sf else _cpm(cur_sf.get("eval_cp"), cur_sf.get("mate"))
     if b.is_game_over(claim_draw=True):
         res = "checkmate" if b.is_checkmate() else "a draw"
         return f"MOVE {san}: ends the game in {res}. {what}."
-    r = sf.analyse(b.fen(), depth=12, multipv=1)
+    r = sf.analyse(b.fen(), depth=WHATIF_DEPTH - 1, multipv=1)
     ln = r["lines"][0] if r["lines"] else None
     after = None if not ln else (ln["cp"] if ln["mate"] is None else (10000 if ln["mate"] > 0 else -10000))
     out = [f"MOVE {san} (standing is always from the human's point of view)"]

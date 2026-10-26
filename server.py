@@ -573,15 +573,23 @@ def hint(gid: str):
 
 def _tools_for(g: Game) -> dict:
     """Stockfish-backed tools the narrator may call (what-if and threat checks)."""
+    def single_thread(fn, *args):
+        # one thread + the fresh hash each search starts with = the same answer every time the user asks
+        SF._set("Threads", 1)
+        try:
+            return fn(*args)
+        finally:
+            SF._set("Threads", 2)
+
     def analyze_move(move: str) -> str:
         with _lock:
             _ensure_rec(g)
-            return explain.analyze_move(SF, g.board, move, g.sf, g.human_color)
+            return single_thread(explain.analyze_move, SF, g.board, move, g.sf, g.human_color)
 
     def get_threats() -> str:
         with _lock:
             _ensure_rec(g)
-            return explain.threats(SF, g.board, g.sf, g.human_color)
+            return single_thread(explain.threats, SF, g.board, g.sf, g.human_color)
     def explain_past_move(move_number: int, side: str = "human") -> str:
         with _lock:
             _ensure_rec(g)
@@ -613,12 +621,16 @@ def chat(gid: str, req: ChatReq):
         g.chat.append({"role": "user", "content": q})
 
     def gen():
-        acc = []
+        acc, used = [], []
         try:
-            for delta in coach.stream_reply(g, q, hist, tools=_tools_for(g)):
+            for delta in coach.stream_reply(g, q, hist, tools=_tools_for(g), used=used):
                 acc.append(delta)
                 yield "data: " + json.dumps({"delta": delta}) + "\n\n"
-            g.chat.append({"role": "assistant", "content": "".join(acc)})
+            entry = {"role": "assistant", "content": "".join(acc)}
+            if used:                                # which engine checks backed this answer
+                entry["tools"] = used
+                yield "data: " + json.dumps({"tools": used}) + "\n\n"
+            g.chat.append(entry)
             _save(g)
             yield "data: " + json.dumps({"done": True}) + "\n\n"
         except Exception as e:
