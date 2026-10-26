@@ -27,7 +27,7 @@
     .app > div{display:contents}
     .app .panel{margin-top:14px !important}
     #cap-top{order:1} .boardbox{order:2} #cap-bot{order:3} .status{order:4}
-    #chatpanel{order:5} #oppanel{order:6} #movespanel{order:7} #newpanel{order:8} #savedpanel{order:9}
+    #chatpanel{order:5} #movespanel{order:7} #newpanel{order:8} #savedpanel{order:9}
   }
 
   /* ---- board ---- */
@@ -151,6 +151,7 @@
     <h1>Chess</h1>
     <span class="sub">Stockfish opponent · adjustable Elo 1500–2800</span>
     <span class="grow"></span>
+    <span class="sub" id="oppelo"></span>
     <span class="sub" id="gameid"></span>
     <span class="sub" id="modelbadge">board: chessground 9.2</span>
   </header>
@@ -212,14 +213,6 @@
     </div>
 
     <div>
-      <div class="panel" id="oppanel">
-        <h2>Opponent</h2>
-        <div class="engine-move">
-          <b id="engmove">—</b><span class="tag" id="engprob"></span><span class="tag" id="engwp"></span>
-        </div>
-        <div class="meta"><span id="engmeta"></span></div>
-        <div class="meta" id="gradeline" style="display:none"></div>
-      </div>
 
       <div class="panel" id="movespanel">
         <h2>Moves</h2>
@@ -437,21 +430,15 @@ function renderPanels(){
        : (S.eval.cp > 0 ? '+' : '') + (S.eval.cp / 100).toFixed(2) + ' (SF)')
     : '–';
 
-  const e = S.engine;
-  $('#engmove').textContent = e ? e.san : '—';
-  $('#engprob').textContent = `Elo ${S.elo}`;
-  $('#engwp').textContent = e && e.label ? e.label : '';
-  $('#engmeta').textContent = e
-    ? `${e.think_ms ? (e.think_ms / 1000).toFixed(1) + 's · ' : ''}Stockfish judge: ${e.label}` +
-      (e.loss ? ` (-${e.loss} cp)` : '') + (e.best && e.best !== e.san ? `, preferred ${e.best}` : '')
-    : `plays at about Elo ${S.elo}, judged by full-strength Stockfish`;
-
-  const gl = $('#gradeline');
-  if (S.grade && S.grade.label){
-    gl.style.display = 'flex';
-    gl.innerHTML = `<span>Your last move <b>${S.grade.san || ''}</b></span>
-      <span class="grade g-${S.grade.label}">${S.grade.label} · ${S.grade.loss_cp} cp</span>`;
-  } else gl.style.display = 'none';
+  $('#oppelo').textContent = `Opponent Elo ${S.elo}`;
+  if (S.grade && S.grade.label){            // your last move's grade, at the right end of the "You took" bar
+    const gl = document.createElement('span');
+    gl.className = `grade g-${S.grade.label}`;
+    gl.style.marginLeft = 'auto';
+    gl.title = 'Your last move';
+    gl.textContent = `${S.grade.san || ''} · ${S.grade.label} · ${S.grade.loss_cp} cp`;
+    $('#cap-bot').appendChild(gl);
+  }
 
   const tbl = $('#moves'); tbl.innerHTML = '';
   for (let i = 0; i < S.moves.length; i += 2){
