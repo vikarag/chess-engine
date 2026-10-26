@@ -1,0 +1,6 @@
+llama-cpp-python>=0.3.36
+python-chess>=1.999
+fastapi
+uvicorn[standard]
+httpx
+numpy

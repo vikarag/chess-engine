@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChessLFM — play &amp; talk</title>
+<link rel="stylesheet" href="/static/vendor/chessground.base.css">
+<link rel="stylesheet" href="/static/vendor/chessground.brown.css">
+<link rel="stylesheet" href="/static/vendor/chessground.cburnett.css">
+<style>
+  :root{
+    --bg:#12151c; --panel:#1a1f29; --panel2:#222936; --line:#2e3746;
+    --txt:#e7ecf3; --dim:#8c98a9; --acc:#7dd3a0; --warn:#e0b256; --bad:#e0736b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--txt);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR",sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 40px}
+  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  h1{font-size:19px;margin:0;letter-spacing:.2px}
+  .sub{color:var(--dim);font-size:12.5px}
+  .grow{flex:1}
+  .app{display:grid;grid-template-columns:minmax(320px,1fr) 420px;gap:20px;align-items:start}
+  @media(max-width:940px){.app{grid-template-columns:1fr}}
+
+  /* ---- board ---- */
+  .boardbox{display:flex;gap:10px;align-items:stretch}
+  .evalbar{width:14px;border-radius:7px;background:#dfe3d5;overflow:hidden;position:relative;flex:0 0 14px}
+  .evalbar .fill{position:absolute;left:0;right:0;top:0;background:#2b3442;transition:height .35s ease}
+  .boardwrap{flex:1;min-width:0}
+
+  /* chessground wrapper: must be a definite square box */
+  #board{width:100%;aspect-ratio:1/1;border-radius:10px;overflow:hidden;
+         box-shadow:0 12px 34px rgba(0,0,0,.45);box-sizing:border-box}
+  /* chessground caches an inline px size at init; keep it glued to the wrapper */
+  #board cg-container{width:100%!important;height:100%!important}
+  #board cg-board{border-radius:10px}
+  /* chessground highlight colours (base.css only ships structure) */
+  cg-board square.last-move{background-color:rgba(242,209,107,.42)}
+  cg-board square.selected{background-color:rgba(242,209,107,.55)}
+  cg-board square.check{background:radial-gradient(ellipse at center,rgba(224,80,80,.85) 0,rgba(224,80,80,.55) 30%,rgba(224,80,80,0) 80%)}
+  cg-board square.move-dest{background:radial-gradient(rgba(20,30,20,.30) 21%,rgba(0,0,0,0) 22%)}
+  cg-board square.move-dest:hover{background:rgba(20,30,20,.18)}
+  cg-board square.oc.move-dest{background:none;box-shadow:inset 0 0 0 4px rgba(20,30,20,.28)}
+  cg-board square.oc.move-dest:hover{box-shadow:inset 0 0 0 4px rgba(20,30,20,.42)}
+
+  .status{margin-top:10px;display:flex;align-items:center;gap:10px;min-height:28px;flex-wrap:wrap}
+  .pill{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:3px 11px;font-size:12.5px;color:var(--dim)}
+  .pill.on{color:var(--acc);border-color:#2e5b45}
+  .spinner{width:13px;height:13px;border:2px solid #3a4454;border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .panel+.panel{margin-top:14px}
+  .panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.9px;color:var(--dim);margin:0 0 10px}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  select,button,input{font:inherit;color:var(--txt);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 10px;outline:none}
+  button{cursor:pointer;transition:.15s}
+  button:hover{border-color:#46536a;background:#28313f}
+  button.primary{background:#26543d;border-color:#2f6b4d;color:#d6ffe9}
+  button.primary:hover{background:#2d6247}
+  button:disabled{opacity:.45;cursor:default}
+
+  .engine-move{display:flex;align-items:baseline;gap:9px;margin-bottom:8px;flex-wrap:wrap}
+  .engine-move b{font-size:22px;letter-spacing:.3px}
+  .tag{font-size:11.5px;padding:2px 8px;border-radius:999px;background:#23303f;color:#9fc0dd}
+  .bars{display:flex;flex-direction:column;gap:5px;margin-top:6px}
+  .bar{display:grid;grid-template-columns:48px 1fr 44px;gap:8px;align-items:center;font-size:12.5px}
+  .bar .track{height:7px;background:#2a3341;border-radius:4px;overflow:hidden}
+  .bar .val{height:100%;background:linear-gradient(90deg,#3f7a5c,#7dd3a0);border-radius:4px}
+  .bar.best .val{background:linear-gradient(90deg,#4b7ab8,#8fc4ff)}
+  .bar .pct{text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
+  .meta{color:var(--dim);font-size:12px;margin-top:9px;display:flex;gap:12px;flex-wrap:wrap}
+
+  .movelist{max-height:168px;overflow:auto;font-size:13.5px;font-variant-numeric:tabular-nums}
+  .movelist table{width:100%;border-collapse:collapse}
+  .movelist td{padding:2px 6px;border-radius:4px}
+  .movelist td.n{color:var(--dim);width:34px}
+  .movelist td.m{width:50%}
+  .movelist tr:nth-child(even){background:rgba(255,255,255,.02)}
+
+  .chat{display:flex;flex-direction:column;height:340px}
+  .msgs{flex:1;overflow:auto;display:flex;flex-direction:column;gap:9px;padding-right:4px}
+  .msg{max-width:92%;padding:8px 11px;border-radius:11px;font-size:13.8px;white-space:pre-wrap;word-break:break-word}
+  .msg.user{align-self:flex-end;background:#2b4a6b;border-bottom-right-radius:3px}
+  .msg.bot{align-self:flex-start;background:#232b38;border:1px solid #2c3545;border-bottom-left-radius:3px}
+  .msg.bot.think{color:var(--dim);font-style:italic}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:9px 0}
+  .chip{font-size:12px;padding:4px 9px;border-radius:999px;background:#202836;border:1px solid var(--line);color:#a9b6c7;cursor:pointer}
+  .chip:hover{border-color:#46536a;color:#e7ecf3}
+  .send{display:flex;gap:7px}
+  .send input{flex:1;min-width:0}
+  .grade{font-size:12.5px;padding:2px 8px;border-radius:999px;border:1px solid}
+  .g-best,.g-good{color:#7dd3a0;border-color:#2e5b45;background:#1c2f26}
+  .g-inaccuracy{color:#e0b256;border-color:#5a4a24;background:#2b2416}
+  .g-mistake,.g-blunder{color:#e0736b;border-color:#5c302c;background:#2e1c1a}
+  .overlay{position:fixed;inset:0;background:rgba(8,10,14,.72);display:none;align-items:center;justify-content:center;z-index:50}
+  .overlay.show{display:flex}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;text-align:center}
+  .promo{display:flex;gap:10px;margin-top:12px}
+  .promo button{display:flex;flex-direction:column;align-items:center;gap:5px;padding:8px 10px}
+  .promo .pv{width:44px;height:44px;background-size:contain;background-repeat:no-repeat;background-position:center}
+  #err{display:none;background:#3a1d1d;border:1px solid #6b2f2f;color:#ffb4ab;padding:10px 12px;border-radius:8px;margin-bottom:12px;font-size:13px}
+  .saved{display:flex;flex-direction:column;gap:2px;max-height:210px;overflow:auto;font-size:13px}
+  .saved-item{display:flex;gap:8px;padding:4px 8px;border-radius:6px;cursor:pointer;white-space:nowrap}
+  .saved-item:hover{background:var(--panel2)}
+  .saved-item.cur{background:#1c2f26;color:var(--acc);cursor:default}
+  .saved-item .sv-main{flex:1;overflow:hidden;text-overflow:ellipsis}
+  .saved details summary{cursor:pointer;color:var(--dim);font-size:12px;padding:4px 8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ChessLFM</h1>
+    <span class="sub">LFM2.5-230M-Chess · Q8_0 · llama.cpp · CPU only</span>
+    <span class="grow"></span>
+    <span class="sub" id="gameid"></span>
+    <span class="sub" id="modelbadge">board: chessground 9.2</span>
+  </header>
+
+  <div id="err"></div>
+
+  <div class="app">
+    <div>
+      <div class="boardbox">
+        <div class="evalbar" title="Stockfish evaluation"><div class="fill" id="evalfill" style="height:50%"></div></div>
+        <div class="boardwrap"><div id="board"></div></div>
+      </div>
+      <div class="status">
+        <span class="pill" id="status">…</span>
+        <span class="pill" id="evalpill">–</span>
+        <span id="spin" style="display:none" class="spinner"></span>
+        <span class="grow"></span>
+        <button id="undo">↶ Take back</button>
+        <button id="hint">💡 Hint</button>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">Saved games</h2><span class="sub">kept 15 days after the last move</span>
+        </div>
+        <div style="height:10px"></div>
+        <div id="saved" class="saved"></div>
+        <div class="row" style="margin-top:10px;gap:8px">
+          <button id="savefile" title="Download the open game as a .json file">Save game as file</button>
+          <button id="delgame" title="Delete the open game">Delete game</button>
+          <span class="grow"></span>
+          <button id="loadfile" title="Open a game file saved earlier">Load game file</button>
+          <input type="file" id="gamefile" accept=".json,application/json" hidden>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <h2>New game</h2>
+        <div class="row">
+          <select id="color">
+            <option value="r" selected>Play Random</option>
+            <option value="w">Play White</option>
+            <option value="b">Play Black</option>
+          </select>
+          <select id="mode"></select>
+          <button class="primary" id="newgame">Start</button>
+          <span class="grow"></span>
+          <label class="sub" style="display:flex;gap:6px;align-items:center;cursor:pointer">
+            <input type="checkbox" id="chatty" checked style="width:auto"> auto-comment
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h2>Opponent's thinking</h2>
+        <div class="engine-move">
+          <b id="engmove">—</b><span class="tag" id="engprob"></span><span class="tag" id="engwp"></span>
+        </div>
+        <div class="bars" id="bars"></div>
+        <div class="meta"><span id="engmeta"></span></div>
+        <div class="meta" id="gradeline" style="display:none"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Moves</h2>
+        <div class="movelist"><table id="moves"></table></div>
+      </div>
+
+      <div class="panel">
+        <h2>Table talk</h2>
+        <div class="chat">
+          <div class="msgs" id="msgs"></div>
+          <div class="chips">
+            <span class="chip" data-q="Why did you play that move?">Why that move?</span>
+            <span class="chip" data-q="What is my biggest threat right now?">My threat?</span>
+            <span class="chip" data-q="What is the plan for both sides in this position?">Plan?</span>
+            <span class="chip" data-q="Did I blunder? Be honest.">Did I blunder?</span>
+          </div>
+          <div class="send">
+            <input id="chatinput" placeholder="Ask about the position, tactics, or its move…">
+            <button class="primary" id="send">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="promooverlay">
+  <div class="card">
+    <div style="margin-bottom:6px">Promote to</div>
+    <div class="promo" id="promochoices"></div>
+  </div>
+</div>
+
+<script type="module">
+import { Chessground } from '/static/vendor/chessground.min.js';
+
+const $ = s => document.querySelector(s);
+const PROMO = [['q','Q'],['r','R'],['b','B'],['n','N']];
+let S = null, cg = null, busy = false, pendingPromo = null;
+let GID = null;                                   // id of the game on screen
+const api = p => '/api/games/' + GID + p;
+
+function fail(msg){
+  const e = $('#err');
+  e.style.display = 'block';
+  e.textContent = msg;
+  console.error(msg);
+}
+
+const colorName = c => c === 'w' ? 'white' : 'black';
+
+function parseFen(fen){
+  const out = {};
+  fen.split(' ')[0].split('/').forEach((row, ri) => {
+    let file = 0;
+    for (const ch of row){
+      if (/\d/.test(ch)) { file += +ch; continue; }
+      out[String.fromCharCode(97 + file) + (8 - ri)] = ch;
+      file++;
+    }
+  });
+  return out;
+}
+
+/* ---------------- board ---------------- */
+function movableView(){
+  const myTurn = S && S.turn === S.human_color && !S.over;
+  return {
+    free: false,
+    color: myTurn ? colorName(S.human_color) : undefined,
+    dests: myTurn ? new Map(Object.entries(S.legal || {})) : new Map(),
+    showDests: true
+  };
+}
+
+function boardConfig(){
+  return {
+    fen: S.fen,
+    orientation: colorName(S.human_color),
+    turnColor: colorName(S.turn),
+    check: S.check ? colorName(S.turn) : false,
+    lastMove: S.last_move || undefined,
+    coordinates: true,
+    animation: { enabled: true, duration: 200 },
+    highlight: { lastMove: true, check: true },
+    draggable: { enabled: true, showGhost: true },
+    selectable: { enabled: true },
+    premovable: { enabled: false },
+    predroppable: { enabled: false },
+    drawable: { enabled: false },
+    movable: Object.assign(movableView(), {
+      events: { after: (orig, dest) => setTimeout(() => onUserMove(orig, dest), 0) }
+    })
+  };
+}
+
+function initBoard(){
+  const el = document.getElementById('board');
+  el.innerHTML = '';                       // chessground owns this node
+  cg = Chessground(el, boardConfig());
+  window.cg = cg;                          // debug handle
+  window.appState = () => S;
+}
+
+function syncBoard(){
+  if (!cg) return initBoard();
+  cg.set({
+    fen: S.fen,
+    orientation: colorName(S.human_color),
+    turnColor: colorName(S.turn),
+    check: S.check ? colorName(S.turn) : false,
+    lastMove: S.last_move || undefined,
+    movable: movableView()
+  });
+}
+
+/* ---------------- moves ---------------- */
+function onUserMove(orig, dest){
+  if (!S || busy) return;
+  const pos = parseFen(S.fen);
+  const pc = pos[orig];
+  const promoRank = S.human_color === 'w' ? '8' : '1';
+  if (pc && pc.toLowerCase() === 'p' && dest[1] === promoRank){
+    pendingPromo = { from: orig, to: dest };
+    showPromo();
+    return;
+  }
+  sendMove(orig + dest);
+}
+
+function showPromo(){
+  const box = $('#promochoices');
+  box.innerHTML = '';
+  const c = S.human_color;
+  PROMO.forEach(([k, label]) => {
+    const b = document.createElement('button');
+    const pv = document.createElement('span');
+    pv.className = 'pv';
+    pv.style.backgroundImage = `url('/static/pieces/${c}${label}.svg')`;
+    const t = document.createElement('span');
+    t.textContent = label;
+    t.style.fontSize = '11px'; t.style.color = '#8c98a9';
+    b.appendChild(pv); b.appendChild(t);
+    b.onclick = () => {
+      $('#promooverlay').classList.remove('show');
+      const p = pendingPromo; pendingPromo = null;
+      if (p) sendMove(p.from + p.to + k);
+    };
+    box.appendChild(b);
+  });
+  $('#promooverlay').classList.add('show');
+}
+
+async function sendMove(uci){
+  busy = true;
+  renderPanels();
+  try{
+    const r = await fetch(api('/move'), {method:'POST', headers:{'Content-Type':'application/json'},
+                                        body: JSON.stringify({uci})});
+    if (!r.ok){
+      fail('Move rejected: ' + (await r.text()));
+      S = await (await fetch(api('/state'))).json();
+    } else {
+      S = await r.json();
+    }
+    syncBoard();
+  } catch(e){ fail('Server error: ' + e); }
+  busy = false;
+  renderPanels();
+  if (!S.over && S.engine) maybeAutoComment();
+  refreshSaved();
+}
+
+/* ---------------- panels ---------------- */
+function renderPanels(){
+  const myTurn = S.turn === S.human_color && !S.over;
+  const st = $('#status');
+  st.textContent = S.over ? (S.result || 'Game over')
+                  : busy ? 'ChessLFM is thinking…'
+                  : myTurn ? 'Your move' : 'ChessLFM is thinking…';
+  st.classList.toggle('on', !S.over && myTurn);
+  $('#spin').style.display = (busy || (S.engine_turn && !S.over)) ? 'inline-block' : 'none';
+
+  let white = 0.5;
+  if (S.eval && S.eval.mate != null) white = S.eval.mate > 0 ? 1 : 0;
+  else if (S.eval && S.eval.cp != null) white = 1 / (1 + Math.pow(10, -S.eval.cp / 400));
+  // Bar follows the board: the player's colour is always at the bottom.
+  // The fill (top) is the opponent's share; the bar background is the player's.
+  const youWhite = S.human_color === 'w';
+  const youShare = youWhite ? white : 1 - white;
+  const youCol = youWhite ? '#e9edda' : '#2b3442';
+  const oppCol = youWhite ? '#2b3442' : '#e9edda';
+  const bar = document.querySelector('.evalbar');
+  bar.style.background = youCol;
+  const fill = $('#evalfill');
+  fill.style.background = oppCol;
+  fill.style.height = ((1 - youShare) * 100).toFixed(1) + '%';
+  $('#evalpill').textContent = S.eval
+    ? (S.eval.mate != null ? `mate ${S.eval.mate > 0 ? '+' : ''}${S.eval.mate}`
+       : (S.eval.cp > 0 ? '+' : '') + (S.eval.cp / 100).toFixed(2) + ' (SF)')
+    : '–';
+
+  const e = S.engine;
+  $('#engmove').textContent = e ? e.san : '—';
+  $('#engprob').textContent = e ? `${Math.round(e.prob * 100)}% own policy` : '';
+  $('#engwp').textContent = e ? `win ${Math.round(e.winprob * 100)}%` : '';
+  const bars = $('#bars'); bars.innerHTML = '';
+  (e && e.top ? e.top : []).forEach((t, i) => {
+    const row = document.createElement('div');
+    row.className = 'bar' + (i === 0 ? ' best' : '');
+    row.innerHTML = `<span>${t.san}</span><span class="track"><span class="val" style="width:${Math.max(2, t.prob * 100).toFixed(1)}%"></span></span><span class="pct">${Math.round(t.prob * 100)}%</span>`;
+    bars.appendChild(row);
+  });
+  $('#engmeta').textContent = e
+    ? `net value ${e.winprob.toFixed(2)} · ${e.nodes} forward pass${e.nodes > 1 ? 'es' : ''} · ${e.think_ms ? (e.think_ms / 1000).toFixed(1) + 's' : ''} · mode ${e.mode}`
+    : 'make a move to see its candidate distribution';
+
+  const gl = $('#gradeline');
+  if (S.grade && S.grade.label){
+    gl.style.display = 'flex';
+    gl.innerHTML = `<span>Your last move <b>${S.grade.san || ''}</b></span>
+      <span class="grade g-${S.grade.label}">${S.grade.label} · ${S.grade.loss_cp} cp</span>`;
+  } else gl.style.display = 'none';
+
+  const tbl = $('#moves'); tbl.innerHTML = '';
+  for (let i = 0; i < S.moves.length; i += 2){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="n">${i / 2 + 1}.</td><td class="m">${S.moves[i] ? S.moves[i].san : ''}</td><td class="m">${S.moves[i + 1] ? S.moves[i + 1].san : ''}</td>`;
+    tbl.appendChild(tr);
+  }
+  const ml = document.querySelector('.movelist');
+  ml.scrollTop = ml.scrollHeight;
+}
+
+/* ---------------- chat ---------------- */
+function bubble(role, text){
+  const d = document.createElement('div');
+  d.className = 'msg ' + role;
+  d.textContent = text;
+  $('#msgs').appendChild(d);
+  $('#msgs').scrollTop = $('#msgs').scrollHeight;
+  return d;
+}
+
+async function ask(text, silent = false){
+  if (!silent) bubble('user', text);
+  const out = bubble('bot', '');
+  out.classList.add('think');
+  let acc = '';
+  try{
+    const r = await fetch(api('/chat'), {method:'POST', headers:{'Content-Type':'application/json'},
+                                        body: JSON.stringify({message: text, silent})});
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true){
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream: true});
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+      for (const p of parts){
+        if (!p.startsWith('data: ')) continue;
+        const obj = JSON.parse(p.slice(6));
+        if (obj.delta){ acc += obj.delta; out.textContent = acc; out.classList.remove('think'); }
+      }
+      $('#msgs').scrollTop = $('#msgs').scrollHeight;
+    }
+  } catch(e){ out.textContent = acc + ' [connection error]'; }
+  if (!acc) out.textContent = '(no reply)';
+  out.classList.remove('think');
+}
+
+function maybeAutoComment(){
+  if (!$('#chatty').checked || !S.engine || S.over) return;
+  ask(`You just played ${S.engine.san}. Comment on it in one or two sentences, as if at the board.`, true);
+}
+
+/* ---------------- controls ---------------- */
+$('#send').onclick = () => {
+  const v = $('#chatinput').value.trim();
+  if (!v) return;
+  $('#chatinput').value = '';
+  ask(v);
+};
+$('#chatinput').addEventListener('keydown', e => { if (e.key === 'Enter') $('#send').click(); });
+document.querySelectorAll('.chip').forEach(c => c.onclick = () => ask(c.dataset.q));
+
+$('#newgame').onclick = createGame;
+$('#savefile').onclick = () => { if (GID) location.href = api('/file'); };
+$('#delgame').onclick = async () => {
+  if (!GID || !confirm(`Delete game ${GID}? This cannot be undone.`)) return;
+  const r = await fetch(api(''), {method:'DELETE'});
+  if (!r.ok){ fail('Delete failed: ' + await r.text()); return; }
+  const list = await (await fetch('/api/games')).json();
+  if (!(list.games.length && await openGame(list.games[0].id, true))) await createGame();
+};
+$('#loadfile').onclick = () => $('#gamefile').click();
+$('#gamefile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  let d;
+  try { d = JSON.parse(await f.text()); } catch(err){ fail(`${f.name} is not a JSON game file.`); return; }
+  busy = true; renderPanels();
+  const r = await fetch('/api/games/import', {method:'POST', headers:{'Content-Type':'application/json'},
+                                              body: JSON.stringify(d)});
+  busy = false;
+  if (!r.ok){ let m = await r.text(); try { m = JSON.parse(m).detail; } catch(_){}; fail('Could not load game file: ' + m); renderPanels(); return; }
+  const g = await r.json();
+  await openGame(g.id, true);
+};
+
+/* ---------------- games ---------------- */
+function showGame(){
+  syncBoard();
+  renderPanels();
+  $('#gameid').textContent = 'game ' + S.id;
+  $('#msgs').innerHTML = '';
+  (S.chat || []).forEach(m => bubble(m.role === 'user' ? 'user' : 'bot', m.content));
+}
+
+async function openGame(id, push){
+  const r = await fetch('/api/games/' + id + '/state');
+  if (!r.ok){
+    fail(`Game ${id} is not available (${r.status}). Games are kept for 15 days after the last move.`);
+    return false;
+  }
+  GID = id;
+  S = await r.json();
+  $('#err').style.display = 'none';
+  if (push) history.pushState({gid: id}, '', '/g/' + id);
+  showGame();
+  refreshSaved();
+  return true;
+}
+
+async function createGame(){
+  busy = true; renderPanels();
+  let color = $('#color').value; const mode = $('#mode').value;
+  if (color === 'r') color = Math.random() < 0.5 ? 'w' : 'b';
+  try{
+    const r = await fetch('/api/games', {method:'POST', headers:{'Content-Type':'application/json'},
+                                         body: JSON.stringify({color, mode})});
+    if (!r.ok) throw new Error(await r.text());
+    S = await r.json();
+  } catch(e){
+    busy = false; fail('Could not start a game: ' + e); renderPanels(); return;
+  }
+  GID = S.id; busy = false;
+  $('#err').style.display = 'none';
+  history.pushState({gid: GID}, '', '/g/' + GID);
+  showGame();
+  refreshSaved();
+  if (S.engine) maybeAutoComment();
+}
+
+async function refreshSaved(){
+  const box = $('#saved');
+  let list;
+  try { list = await (await fetch('/api/games')).json(); } catch(e){ return; }
+  box.innerHTML = '';
+  if (!list.games.length){
+    box.innerHTML = '<div class="sub">No saved games yet.</div>';
+    return;
+  }
+  const row = g => {
+    const el = document.createElement('div');
+    el.className = 'saved-item' + (g.id === GID ? ' cur' : '');
+    const d = new Date(g.updated * 1000), old = Date.now() - d >= 864e5;
+    const when = old ? d.toLocaleDateString([], {month:'short', day:'numeric'})
+                     : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    const res = g.result === 'in progress' ? '' : ' · ' + g.result;
+    el.innerHTML = `<span class="sv-main">${g.human_color === 'w' ? '\u25CB' : '\u25CF'} ${g.mode} · ${g.plies} ply${res}</span><span class="sub">${when}</span>`;
+    el.title = g.last_moves || 'no moves';
+    if (g.id !== GID) el.onclick = () => openGame(g.id, true);
+    return el;
+  };
+  const cut = Date.now() / 1000 - 86400;
+  list.games.filter(g => g.updated >= cut).forEach(g => box.appendChild(row(g)));
+  const older = list.games.filter(g => g.updated < cut);
+  if (older.length){
+    const det = document.createElement('details');
+    det.innerHTML = `<summary>Older (${older.length})</summary>`;
+    if (older.some(g => g.id === GID)) det.open = true;
+    older.forEach(g => det.appendChild(row(g)));
+    box.appendChild(det);
+  }
+}
+
+window.addEventListener('popstate', () => {
+  const m = location.pathname.match(/^\/g\/([0-9a-f]{10})$/);
+  if (m && m[1] !== GID) openGame(m[1], false);
+});
+
+$('#undo').onclick = async () => {
+  busy = true; renderPanels();
+  const r = await fetch(api('/undo'), {method:'POST'});
+  if (r.ok) S = await r.json();
+  busy = false;
+  syncBoard();
+  renderPanels();
+};
+
+$('#hint').onclick = async () => {
+  $('#hint').disabled = true;
+  try{
+    const h = await (await fetch(api('/hint'), {method:'POST'})).json();
+    bubble('user', 'Give me a hint.');
+    bubble('bot', `Stockfish likes ${h.san} (${h.mate != null ? 'mate ' + h.mate : (h.cp > 0 ? '+' : '') + (h.cp / 100).toFixed(2)}).` +
+                  (h.pv && h.pv.length ? `\nLine: ${h.pv.slice(0, 5).join(' ')}` : ''));
+  } catch(e){ fail('Hint failed: ' + e); }
+  finally { $('#hint').disabled = false; }
+};
+
+/* ---------------- boot ---------------- */
+(async function init(){
+  try{
+    const list = await (await fetch('/api/games')).json();
+    const msel = $('#mode');
+    Object.entries(list.modes).forEach(([k, v]) => {
+      const o = document.createElement('option');
+      o.value = k; o.textContent = v;
+      if (k === 'normal') o.selected = true;
+      msel.appendChild(o);
+    });
+    const m = location.pathname.match(/^\/g\/([0-9a-f]{10})$/);
+    if (m){
+      await openGame(m[1], false);                 // URL names the game: load it
+    } else if (list.games.length){
+      if (await openGame(list.games[0].id, false))  // bare "/": newest saved game
+        history.replaceState({gid: GID}, '', '/g/' + GID);
+    } else {
+      await createGame();                           // nothing saved yet
+    }
+    // keep chessground's cached bounds in sync with the actual layout
+    const redraw = () => { if (cg) cg.redrawAll(); };
+    window.addEventListener('resize', redraw);
+    if (window.ResizeObserver) new ResizeObserver(redraw).observe(document.getElementById('board'));
+    requestAnimationFrame(() => setTimeout(redraw, 60));
+  } catch(e){ fail('Init failed: ' + e); }
+})();
+</script>
+</body>
+</html>

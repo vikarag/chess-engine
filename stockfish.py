@@ -1,0 +1,148 @@
+"""Thin UCI wrapper around a persistent Stockfish process.
+
+Used as the *ground truth* layer: evals, best lines, and move grading.
+The 230M chess model supplies the moves and its own policy intuition; it
+must never be the source of tactical claims.
+"""
+import subprocess
+import threading
+
+import chess
+
+
+class Stockfish:
+    def __init__(self, path: str = "/usr/games/stockfish", threads: int = 2, hash_mb: int = 64):
+        self.lock = threading.Lock()
+        self.p = subprocess.Popen([path], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        self._send("uci")
+        self._read_until("uciok")
+        self._set("Threads", threads)
+        self._set("Hash", hash_mb)
+        self._set("Threads", threads)
+        self._send("isready")
+        self._read_until("readyok")
+
+    # ---------- plumbing ----------
+    def _send(self, cmd: str):
+        self.p.stdin.write(cmd + "\n")
+        self.p.stdin.flush()
+
+    def _read_until(self, token: str) -> list[str]:
+        out = []
+        while True:
+            line = self.p.stdout.readline()
+            if not line:
+                raise RuntimeError("stockfish exited")
+            line = line.strip()
+            out.append(line)
+            if line.startswith(token):
+                return out
+
+    def _set(self, name: str, value):
+        self._send(f"setoption name {name} value {value}")
+
+    def quit(self):
+        try:
+            self._send("quit")
+        except Exception:
+            pass
+
+    # ---------- analysis ----------
+    def analyse(self, fen: str, depth: int = 12, multipv: int = 3) -> dict:
+        board = chess.Board(fen)
+        with self.lock:
+            self._set("MultiPV", multipv)
+            self._send("ucinewgame")
+            self._send(f"position fen {fen}")
+            self._send(f"go depth {depth}")
+            best = None
+            lines: dict[int, dict] = {}
+            while True:
+                line = self.p.stdout.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if line.startswith("bestmove"):
+                    best = line.split()[1] if len(line.split()) > 1 else None
+                    break
+                if not line.startswith("info") or " pv " not in line + " ":
+                    continue
+                parts = line.split()
+                d = {"pv": parts[parts.index("pv") + 1:]}
+                if "multipv" in parts:
+                    d["multipv"] = int(parts[parts.index("multipv") + 1])
+                if "depth" in parts:
+                    d["depth"] = int(parts[parts.index("depth") + 1])
+                if "score" in parts:
+                    kind = parts[parts.index("score") + 1]
+                    val = int(parts[parts.index("score") + 2])
+                    d[kind] = val
+                if "pv" in d:
+                    lines[d.get("multipv", 1)] = d
+        out = []
+        for i in sorted(lines):
+            ln = lines[i]
+            cp = ln.get("cp")
+            mate = ln.get("mate")
+            if cp is not None and board.turn == chess.BLACK:
+                cp = -cp
+            if mate is not None and board.turn == chess.BLACK:
+                mate = -mate
+            out.append({"rank": i, "cp": cp, "mate": mate,
+                        "depth": ln.get("depth"), "pv": ln["pv"],
+                        "pv_san": _pv_san(board, ln["pv"])})
+        return {"best": best, "lines": out, "fen": fen,
+                "eval_cp": out[0]["cp"] if out else None,
+                "mate": out[0]["mate"] if out else None}
+
+    def eval_cp(self, fen: str, depth: int = 10) -> int | None:
+        """Centipawns from White's point of view (mate mapped to +/-10000)."""
+        r = self.analyse(fen, depth=depth, multipv=1)
+        if r["mate"] is not None:
+            return 10000 if r["mate"] > 0 else -10000
+        return r["eval_cp"]
+
+    def best_move(self, fen: str, depth: int = 12) -> dict:
+        return self.analyse(fen, depth=depth, multipv=1)
+
+
+def _pv_san(board: chess.Board, pv: list[str]) -> list[str]:
+    b = board.copy(stack=False)
+    out = []
+    for u in pv[:10]:
+        try:
+            m = chess.Move.from_uci(u)
+            if m not in b.legal_moves:
+                break
+            out.append(b.san(m))
+            b.push(m)
+        except Exception:
+            break
+    return out
+
+
+def grade(before_fen: str, after_fen: str, sf: Stockfish, depth: int = 10) -> dict:
+    """Grade a move by centipawn loss for the side that moved."""
+    b = chess.Board(before_fen)
+    mover_white = b.turn == chess.WHITE
+    e_before = sf.eval_cp(before_fen, depth)
+    e_after = sf.eval_cp(after_fen, depth)
+    if e_before is None or e_after is None:
+        return {"loss_cp": None, "label": "unknown"}
+    # from the mover's point of view
+    before = e_before if mover_white else -e_before
+    after = e_after if mover_white else -e_after
+    loss = max(0, min(before, 9000) - min(after, 9000))
+    if abs(before) >= 9000 or abs(after) >= 9000:
+        loss = max(0, loss)
+    if loss < 25:
+        label = "best" if loss < 10 else "good"
+    elif loss < 60:
+        label = "inaccuracy"
+    elif loss < 150:
+        label = "mistake"
+    else:
+        label = "blunder"
+    return {"loss_cp": int(loss), "label": label,
+            "before_cp": int(before), "after_cp": int(after)}
