@@ -335,6 +335,7 @@ def state(g: Game) -> dict:
         "moves": [{"san": s, "uci": u, "color": "w" if i % 2 == 0 else "b"}
                   for i, (s, u) in enumerate(zip(g.history_san, g.history_uci))],
         "last_move": [last[:2], last[2:4]] if last else None,
+        "fens": g.fens,                      # position after each ply (index 0 = start), for browsing past moves
         "check": b.is_check(),
         "over": b.is_game_over(claim_draw=True),
         "captured": stats.captures(g.history_uci),   # pieces each colour has taken, by name

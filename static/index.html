@@ -100,6 +100,10 @@
   .movelist td{padding:2px 6px;border-radius:4px}
   .movelist td.n{color:var(--dim);width:34px}
   .movelist td.m{width:50%}
+  .mv{all:unset;cursor:pointer;padding:1px 6px;border-radius:4px;display:inline-block}
+  .mv:hover{background:#28313f}
+  .mv:focus-visible{outline:2px solid var(--acc)}
+  .mv.on{background:#2e5b45;color:#d6ffe9}
   .movelist tr:nth-child(even){background:rgba(255,255,255,.02)}
 
   .chat{display:flex;flex-direction:column;height:340px}
@@ -163,6 +167,9 @@
       <div class="status">
         <span class="pill" id="status">…</span>
         <span class="pill" id="evalpill">–</span>
+        <span class="pill" id="viewing" style="display:none;align-items:center;gap:8px;color:var(--txt)">
+          <span id="viewtext"></span><button id="backlive" style="padding:2px 8px;font-size:12px">↩ Back to game</button>
+        </span>
         <span id="spin" style="display:none" class="spinner"></span>
         <span class="grow"></span>
         <button id="savefile" title="Download the open game as a .json file">Save current game as file</button>
@@ -310,7 +317,11 @@ function initBoard(){
   window.appState = () => S;
 }
 
+let VIEW = null;   // ply index being browsed in the move list (null = the live game)
+
 function syncBoard(){
+  VIEW = null;
+  $('#viewing').style.display = 'none';
   if (!cg) return initBoard();
   cg.set({
     fen: S.fen,
@@ -444,11 +455,26 @@ function renderPanels(){
   const tbl = $('#moves'); tbl.innerHTML = '';
   for (let i = 0; i < S.moves.length; i += 2){
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="n">${i / 2 + 1}.</td><td class="m">${S.moves[i] ? S.moves[i].san : ''}</td><td class="m">${S.moves[i + 1] ? S.moves[i + 1].san : ''}</td>`;
+    const cell = k => S.moves[k]
+      ? `<button class="mv${VIEW === k ? ' on' : ''}" data-ply="${k}" title="Show the board after this move">${S.moves[k].san}</button>` : '';
+    tr.innerHTML = `<td class="n">${i / 2 + 1}.</td><td class="m">${cell(i)}</td><td class="m">${cell(i + 1)}</td>`;
     tbl.appendChild(tr);
   }
   const ml = document.querySelector('.movelist');
-  ml.scrollTop = ml.scrollHeight;
+  if (VIEW === null) ml.scrollTop = ml.scrollHeight;
+}
+
+// Show the board as it was right after ply i (read-only). The last move is the live position.
+function viewPly(i){
+  if (!S || !S.fens || !S.moves[i] || !cg) return;
+  if (i === S.moves.length - 1){ syncBoard(); renderPanels(); return; }
+  VIEW = i;
+  const u = S.moves[i].uci;
+  cg.set({fen: S.fens[i + 1], turnColor: colorName(i % 2 ? 'w' : 'b'), check: false,
+          lastMove: [u.slice(0, 2), u.slice(2, 4)], movable: {color: undefined, dests: new Map()}});
+  $('#viewtext').textContent = `Viewing after ${Math.floor(i / 2) + 1}${i % 2 ? '...' : '.'} ${S.moves[i].san}`;
+  $('#viewing').style.display = 'inline-flex';
+  renderPanels();
 }
 
 /* ---------------- chat ---------------- */
@@ -519,6 +545,8 @@ $('#send').onclick = () => {
 $('#chatinput').addEventListener('keydown', e => { if (e.key === 'Enter') $('#send').click(); });
 
 $('#newgame').onclick = createGame;
+$('#moves').onclick = e => { const b = e.target.closest('.mv'); if (b) viewPly(+b.dataset.ply); };
+$('#backlive').onclick = () => { syncBoard(); renderPanels(); };
 $('#elo').oninput = e => $('#elov').textContent = e.target.value;
 $('#savefile').onclick = () => { if (GID) location.href = api('/file'); };
 $('#delgame').onclick = async () => {
