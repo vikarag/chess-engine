@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ChessLFM — play &amp; talk</title>
+<title>Chess — play &amp; talk</title>
 <link rel="stylesheet" href="/static/vendor/chessground.base.css">
 <link rel="stylesheet" href="/static/vendor/chessground.brown.css">
 <link rel="stylesheet" href="/static/vendor/chessground.cburnett.css">
@@ -112,8 +112,8 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>ChessLFM</h1>
-    <span class="sub">LFM2.5-230M-Chess · Q8_0 · llama.cpp · CPU only</span>
+    <h1>Chess</h1>
+    <span class="sub">Stockfish opponent · adjustable Elo 1500–2500</span>
     <span class="grow"></span>
     <span class="sub" id="gameid"></span>
     <span class="sub" id="modelbadge">board: chessground 9.2</span>
@@ -157,7 +157,10 @@
             <option value="w">Play White</option>
             <option value="b">Play Black</option>
           </select>
-          <select id="mode"></select>
+          <label class="sub" style="display:flex;gap:8px;align-items:center" title="Opponent strength, fixed for the whole game">
+            Elo <input type="range" id="elo" min="1500" max="2500" step="100" value="1800" style="width:130px;padding:0">
+            <b id="elov" style="color:var(--txt);min-width:34px">1800</b>
+          </label>
           <button class="primary" id="newgame">Start</button>
           <span class="grow"></span>
           <label class="sub" style="display:flex;gap:6px;align-items:center;cursor:pointer">
@@ -169,11 +172,10 @@
 
     <div>
       <div class="panel">
-        <h2>Opponent's thinking</h2>
+        <h2>Opponent</h2>
         <div class="engine-move">
           <b id="engmove">—</b><span class="tag" id="engprob"></span><span class="tag" id="engwp"></span>
         </div>
-        <div class="bars" id="bars"></div>
         <div class="meta"><span id="engmeta"></span></div>
         <div class="meta" id="gradeline" style="display:none"></div>
       </div>
@@ -355,8 +357,8 @@ function renderPanels(){
   const myTurn = S.turn === S.human_color && !S.over;
   const st = $('#status');
   st.textContent = S.over ? (S.result || 'Game over')
-                  : busy ? 'ChessLFM is thinking…'
-                  : myTurn ? 'Your move' : 'ChessLFM is thinking…';
+                  : busy ? 'Opponent is thinking…'
+                  : myTurn ? 'Your move' : 'Opponent is thinking…';
   st.classList.toggle('on', !S.over && myTurn);
   $('#spin').style.display = (busy || (S.engine_turn && !S.over)) ? 'inline-block' : 'none';
 
@@ -381,18 +383,12 @@ function renderPanels(){
 
   const e = S.engine;
   $('#engmove').textContent = e ? e.san : '—';
-  $('#engprob').textContent = e ? `${Math.round(e.prob * 100)}% own policy` : '';
-  $('#engwp').textContent = e ? `win ${Math.round(e.winprob * 100)}%` : '';
-  const bars = $('#bars'); bars.innerHTML = '';
-  (e && e.top ? e.top : []).forEach((t, i) => {
-    const row = document.createElement('div');
-    row.className = 'bar' + (i === 0 ? ' best' : '');
-    row.innerHTML = `<span>${t.san}</span><span class="track"><span class="val" style="width:${Math.max(2, t.prob * 100).toFixed(1)}%"></span></span><span class="pct">${Math.round(t.prob * 100)}%</span>`;
-    bars.appendChild(row);
-  });
+  $('#engprob').textContent = `Elo ${S.elo}`;
+  $('#engwp').textContent = e && e.label ? e.label : '';
   $('#engmeta').textContent = e
-    ? `net value ${e.winprob.toFixed(2)} · ${e.nodes} forward pass${e.nodes > 1 ? 'es' : ''} · ${e.think_ms ? (e.think_ms / 1000).toFixed(1) + 's' : ''} · mode ${e.mode}`
-    : 'make a move to see its candidate distribution';
+    ? `${e.think_ms ? (e.think_ms / 1000).toFixed(1) + 's · ' : ''}Stockfish judge: ${e.label}` +
+      (e.loss ? ` (-${e.loss} cp)` : '') + (e.best && e.best !== e.san ? `, preferred ${e.best}` : '')
+    : `plays at about Elo ${S.elo}, judged by full-strength Stockfish`;
 
   const gl = $('#gradeline');
   if (S.grade && S.grade.label){
@@ -466,6 +462,7 @@ $('#chatinput').addEventListener('keydown', e => { if (e.key === 'Enter') $('#se
 document.querySelectorAll('.chip').forEach(c => c.onclick = () => ask(c.dataset.q));
 
 $('#newgame').onclick = createGame;
+$('#elo').oninput = e => $('#elov').textContent = e.target.value;
 $('#savefile').onclick = () => { if (GID) location.href = api('/file'); };
 $('#delgame').onclick = async () => {
   if (!GID || !confirm(`Delete game ${GID}? This cannot be undone.`)) return;
@@ -515,11 +512,11 @@ async function openGame(id, push){
 
 async function createGame(){
   busy = true; renderPanels();
-  let color = $('#color').value; const mode = $('#mode').value;
+  let color = $('#color').value; const elo = +$('#elo').value;
   if (color === 'r') color = Math.random() < 0.5 ? 'w' : 'b';
   try{
     const r = await fetch('/api/games', {method:'POST', headers:{'Content-Type':'application/json'},
-                                         body: JSON.stringify({color, mode})});
+                                         body: JSON.stringify({color, elo})});
     if (!r.ok) throw new Error(await r.text());
     S = await r.json();
   } catch(e){
@@ -549,7 +546,7 @@ async function refreshSaved(){
     const when = old ? d.toLocaleDateString([], {month:'short', day:'numeric'})
                      : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
     const res = g.result === 'in progress' ? '' : ' · ' + g.result;
-    el.innerHTML = `<span class="sv-main">${g.human_color === 'w' ? '\u25CB' : '\u25CF'} ${g.mode} · ${g.plies} ply${res}</span><span class="sub">${when}</span>`;
+    el.innerHTML = `<span class="sv-main">${g.human_color === 'w' ? '\u25CB' : '\u25CF'} Elo ${g.elo} · ${g.plies} ply${res}</span><span class="sub">${when}</span>`;
     el.title = g.last_moves || 'no moves';
     if (g.id !== GID) el.onclick = () => openGame(g.id, true);
     return el;
@@ -595,13 +592,6 @@ $('#hint').onclick = async () => {
 (async function init(){
   try{
     const list = await (await fetch('/api/games')).json();
-    const msel = $('#mode');
-    Object.entries(list.modes).forEach(([k, v]) => {
-      const o = document.createElement('option');
-      o.value = k; o.textContent = v;
-      if (k === 'normal') o.selected = true;
-      msel.appendChild(o);
-    });
     const m = location.pathname.match(/^\/g\/([0-9a-f]{10})$/);
     if (m){
       await openGame(m[1], false);                 // URL names the game: load it

@@ -1,8 +1,8 @@
 """Thin UCI wrapper around a persistent Stockfish process.
 
-Used as the *ground truth* layer: evals, best lines, and move grading.
-The 230M chess model supplies the moves and its own policy intuition; it
-must never be the source of tactical claims.
+Two instances are used by the server: a *judge* at full strength (evals, best
+lines, move grading) and a *player* that only ever calls play(), with
+UCI_LimitStrength set to the game's Elo.
 """
 import subprocess
 import threading
@@ -96,6 +96,25 @@ class Stockfish:
                 "eval_cp": out[0]["cp"] if out else None,
                 "mate": out[0]["mate"] if out else None}
 
+    def play(self, fen: str, elo: int, max_depth: int = 7, movetime_ms: int = 3000) -> str:
+        """Best move (uci) at a limited strength (Stockfish 16 accepts UCI_Elo 1320-3190).
+        The search ends at max_depth plies or movetime_ms, whichever comes first."""
+        with self.lock:
+            self._set("UCI_LimitStrength", "true")
+            self._set("UCI_Elo", int(elo))
+            self._set("MultiPV", 1)
+            self._send(f"position fen {fen}")
+            self._send(f"go depth {max_depth} movetime {movetime_ms}")
+            while True:
+                line = self.p.stdout.readline()
+                if not line:
+                    raise RuntimeError("stockfish exited")
+                if line.startswith("bestmove"):
+                    mv = line.split()[1]
+                    if mv == "(none)":
+                        raise RuntimeError("no legal move")
+                    return mv
+
     def eval_cp(self, fen: str, depth: int = 10) -> int | None:
         """Centipawns from White's point of view (mate mapped to +/-10000)."""
         r = self.analyse(fen, depth=depth, multipv=1)
@@ -122,27 +141,12 @@ def _pv_san(board: chess.Board, pv: list[str]) -> list[str]:
     return out
 
 
-def grade(before_fen: str, after_fen: str, sf: Stockfish, depth: int = 10) -> dict:
-    """Grade a move by centipawn loss for the side that moved."""
-    b = chess.Board(before_fen)
-    mover_white = b.turn == chess.WHITE
-    e_before = sf.eval_cp(before_fen, depth)
-    e_after = sf.eval_cp(after_fen, depth)
-    if e_before is None or e_after is None:
-        return {"loss_cp": None, "label": "unknown"}
-    # from the mover's point of view
-    before = e_before if mover_white else -e_before
-    after = e_after if mover_white else -e_after
-    loss = max(0, min(before, 9000) - min(after, 9000))
-    if abs(before) >= 9000 or abs(after) >= 9000:
-        loss = max(0, loss)
+def label_loss(loss: float) -> str:
+    """Label a move by centipawn loss for the side that moved."""
+    if loss < 10:
+        return "best"
     if loss < 25:
-        label = "best" if loss < 10 else "good"
-    elif loss < 60:
-        label = "inaccuracy"
-    elif loss < 150:
-        label = "mistake"
-    else:
-        label = "blunder"
-    return {"loss_cp": int(loss), "label": label,
-            "before_cp": int(before), "after_cp": int(after)}
+        return "good"
+    if loss < 60:
+        return "inaccuracy"
+    return "mistake" if loss < 150 else "blunder"

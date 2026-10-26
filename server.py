@@ -1,4 +1,4 @@
-"""FastAPI app: play LFM2.5-230M-Chess in the browser and talk to it.
+"""FastAPI app: play Elo-limited Stockfish in the browser and talk to it.
 
 Every game has an id (10 hex chars), is saved as games/<id>.json and is
 addressed by URL: /g/<id>. A browser refresh reloads that game from the
@@ -7,7 +7,6 @@ downloaded as its JSON file, deleted, or imported from such a file.
 """
 import json
 import os
-import random
 import re
 import secrets
 import threading
@@ -21,11 +20,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import coach
-from engine import ChessLFM, repetition_count
-from stockfish import Stockfish, grade
+import explain
+import stats
+from stockfish import Stockfish, label_loss
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MODEL = os.path.join(HERE, "models", "LFM2.5-230M-Chess.Q8_0.gguf")
 GAMES = os.path.join(HERE, "games")
 INDEX = os.path.join(HERE, "static", "index.html")
 RETENTION_S = 15 * 24 * 3600
@@ -33,13 +32,24 @@ GAME_ID_RE = re.compile(r"[0-9a-f]{10}")
 os.makedirs(GAMES, exist_ok=True)
 
 _lock = threading.RLock()     # one engine, one Stockfish: compute is serialised
-print("[startup] loading engine…", flush=True)
-ENGINE = ChessLFM(MODEL, n_threads=2)
-SF = Stockfish(threads=2, hash_mb=128)
+print("[startup] starting Stockfish…", flush=True)
+JUDGE_BIN = os.path.join(HERE, "bin", "stockfish-19")           # official SF19 build, git-ignored
+JUDGE_ID = "sf19" if os.path.exists(JUDGE_BIN) else "sf16"      # recorded in game files
+SF = Stockfish(path=JUDGE_BIN if JUDGE_ID == "sf19" else "/usr/games/stockfish",
+               threads=2, hash_mb=128)                          # judge: full strength, never plays
+PLAYER = Stockfish(threads=2, hash_mb=64)         # opponent: Stockfish 16, UCI_Elo-limited, only calls play()
 print("[startup] ready", flush=True)
 
-MODES = {"casual": "Casual (~1200, varied)", "normal": "Normal (policy, ~1500)",
-         "strong": "Strong (1-ply search, slow)"}
+ELO_MIN, ELO_MAX, ELO_DEFAULT = 1500, 2500, 1800
+SF_DEPTH = 12                                     # judge depth for every recorded position
+LEGACY_ELO = {"casual": 1500, "normal": 1700, "strong": 2000}   # games saved before Elo existed
+
+
+def _clamp_elo(v) -> int:
+    try:
+        return max(ELO_MIN, min(ELO_MAX, int(v)))
+    except (TypeError, ValueError):
+        return ELO_DEFAULT
 
 
 @dataclass
@@ -47,13 +57,14 @@ class Game:
     id: str
     board: chess.Board = field(default_factory=chess.Board)
     human_color: str = "w"
-    mode: str = "normal"
+    elo: int = ELO_DEFAULT
     history_uci: list = field(default_factory=list)
     history_san: list = field(default_factory=list)
     fens: list = field(default_factory=list)
+    rec: list = field(default_factory=list)   # per-ply judge record, see stats.py
     last_engine: dict | None = None
-    last_grade: dict | None = None
-    sf: dict | None = None
+    sf: dict | None = None                    # judge analysis of the current position
+    sf_ply: int = -1                          # ply count that g.sf belongs to
     chat: list = field(default_factory=list)
     result: str | None = None
     think_ms: int | None = None
@@ -79,8 +90,8 @@ def _new_id() -> str:
 def _save(g: Game) -> None:
     g.updated = time.time()
     data = {"id": g.id, "created": g.created, "updated": g.updated,
-            "human_color": g.human_color, "mode": g.mode,
-            "uci": g.history_uci, "chat": g.chat[-40:]}
+            "human_color": g.human_color, "elo": g.elo, "judge": JUDGE_ID,
+            "uci": g.history_uci, "rec": g.rec, "chat": g.chat[-40:]}
     tmp = _path(g.id) + ".tmp"
     try:
         with open(tmp, "w") as f:
@@ -100,8 +111,16 @@ def _build(d: dict) -> Game:
         sans.append(b.san(m))
         b.push(m)
         fens.append(b.fen())
-    g = Game(id=d["id"], board=b, human_color=d.get("human_color", "w"),
-             mode=d.get("mode", "normal"), history_uci=list(d.get("uci", [])),
+    # records made by a different judge are discarded and recomputed on first view
+    rec = d.get("rec") if isinstance(d.get("rec"), list) and d.get("judge") == JUDGE_ID else []
+    ok = 0       # keep only records that still line up with the move list
+    for r in rec[:len(sans)]:
+        if not (isinstance(r, dict) and r.get("san") == sans[ok] and "color" in r):
+            break
+        ok += 1
+    g = Game(id=d["id"], board=b, human_color=d.get("human_color", "w"), rec=rec[:ok],
+             elo=_clamp_elo(d.get("elo") or LEGACY_ELO.get(d.get("mode"))),
+             history_uci=list(d.get("uci", [])),
              history_san=sans, fens=fens, chat=d.get("chat", []),
              created=d.get("created", time.time()),
              updated=d.get("updated", time.time()))
@@ -131,8 +150,8 @@ def _need(gid: str) -> Game:
     return g
 
 
-def create_game(color: str, mode: str) -> Game:
-    g = Game(id=_new_id(), human_color=color, mode=mode)
+def create_game(color: str, elo: int) -> Game:
+    g = Game(id=_new_id(), human_color=color, elo=elo)
     g.fens = [g.board.fen()]
     _GAMES[g.id] = g
     _save(g)
@@ -204,9 +223,16 @@ def _result_text(b: chess.Board) -> str | None:
     return "Draw"
 
 
-def _sf_block(g: Game, depth: int = 12) -> dict | None:
+def _sf_block(board: chess.Board, depth: int = SF_DEPTH) -> dict | None:
+    """Full-strength judge analysis of a position (White-POV centipawns, 3 lines)."""
+    if board.is_game_over(claim_draw=True):
+        cp = 0
+        if board.is_checkmate():
+            cp = 10000 if board.turn == chess.BLACK else -10000
+        return {"eval_cp": cp, "mate": None, "best": None, "best_san": None,
+                "depth": 0, "pv_san": [], "lines": []}
     try:
-        r = SF.analyse(g.board.fen(), depth=depth, multipv=3)
+        r = SF.analyse(board.fen(), depth=depth, multipv=3)
         lines = r["lines"]
         best_san = lines[0]["pv_san"][0] if lines and lines[0]["pv_san"] else r["best"]
         return {"eval_cp": r["eval_cp"], "mate": r["mate"], "best": r["best"],
@@ -218,53 +244,85 @@ def _sf_block(g: Game, depth: int = 12) -> dict | None:
         return None
 
 
-def _pick_engine_move(g: Game, an) -> object:
-    if g.mode == "casual":
-        pool = an.candidates[:5]
-        w = [max(c.prob, 0.01) ** 0.7 for c in pool]
-        return random.choices(pool, weights=w, k=1)[0]
-    return an.best
+def _cp(sf: dict | None) -> int | None:
+    """White-POV centipawns with mate mapped to +/-10000."""
+    if sf is None:
+        return None
+    if sf["mate"] is not None:
+        return 10000 if sf["mate"] > 0 else -10000
+    return sf["eval_cp"]
+
+
+def _grade_move(color: str, prev: dict | None, cur: dict | None, san: str) -> dict:
+    """Judge record for one ply: how much the mover lost versus Stockfish's best."""
+    before, after = _cp(prev), _cp(cur)
+    r = {"san": san, "color": color, "cp": after, "best": prev.get("best_san") if prev else None,
+         "lines": prev.get("lines", []) if prev else [], "loss": None, "label": "unknown"}
+    if before is not None and after is not None:
+        sign = 1 if color == "w" else -1
+        r["loss"] = int(max(0, min(sign * before, 9000) - min(sign * after, 9000)))
+        r["label"] = label_loss(r["loss"])
+    return r
+
+
+def _ensure_rec(g: Game) -> None:
+    """Bring g.rec and g.sf up to date with the move list (new moves, old games, imports)."""
+    n = len(g.history_uci)
+    del g.rec[n:]
+    start = len(g.rec)
+    if start == n and g.sf is not None and g.sf_ply == n:
+        return
+    b = chess.Board()
+    for u in g.history_uci[:start]:
+        b.push(chess.Move.from_uci(u))
+    prev = g.sf if (g.sf is not None and g.sf_ply == start) else _sf_block(b)
+    for u in g.history_uci[start:]:
+        m = chess.Move.from_uci(u)
+        san, color = b.san(m), "w" if b.turn else "b"
+        b.push(m)
+        cur = _sf_block(b)
+        g.rec.append(_grade_move(color, prev, cur, san))
+        prev = cur
+    g.sf, g.sf_ply = prev, n
+
+
+def _push(g: Game, m: chess.Move) -> None:
+    g.history_san.append(g.board.san(m))
+    g.board.push(m)
+    g.history_uci.append(m.uci())
+    g.fens.append(g.board.fen())
 
 
 def _engine_play(g: Game) -> None:
     if g.board.is_game_over(claim_draw=True):
         g.result = _result_text(g.board)
         return
+    _ensure_rec(g)
     t0 = time.time()
-    depth = 2 if g.mode == "strong" else 1
-    an = ENGINE.analyse(g.board, g.history_uci, repetition_count(g.fens),
-                        depth=depth, root_k=4, child_k=3, time_budget=25)
-    mv = _pick_engine_move(g, an)
+    m = chess.Move.from_uci(PLAYER.play(g.board.fen(), g.elo))
     g.think_ms = int((time.time() - t0) * 1000)
-    m = chess.Move.from_uci(mv.uci)
-    san = g.board.san(m)
-    g.board.push(m)
-    g.history_uci.append(mv.uci)
-    g.history_san.append(san)
-    g.fens.append(g.board.fen())
-    g.last_engine = {
-        "uci": mv.uci, "san": mv.san, "prob": mv.prob,
-        "winprob": an.winprob, "nodes": an.nodes, "think_ms": g.think_ms,
-        "top": [{"san": c.san, "prob": c.prob} for c in an.candidates[:5]],
-        "mode": g.mode,
-    }
+    _push(g, m)
+    _ensure_rec(g)                      # judges the move just played
+    r = g.rec[-1]
+    g.last_engine = {"uci": m.uci(), "san": r["san"], "elo": g.elo, "think_ms": g.think_ms,
+                     "label": r["label"], "loss": r["loss"], "best": r["best"]}
     g.result = _result_text(g.board)
-    g.sf = _sf_block(g, 12)
     _save(g)
 
 
 def state(g: Game) -> dict:
     b = g.board
-    if g.sf is None and not b.is_game_over(claim_draw=True):
-        g.sf = _sf_block(g, 10)   # lazy: first load after a restart
+    _ensure_rec(g)
+    mine = [r for r in g.rec if r["color"] == g.human_color]
+    grade = ({"san": mine[-1]["san"], "label": mine[-1]["label"], "loss_cp": mine[-1]["loss"]}
+             if mine else None)
     last = g.history_uci[-1] if g.history_uci else None
     return {
         "id": g.id,
         "fen": b.fen(),
         "turn": "w" if b.turn else "b",
         "human_color": g.human_color,
-        "mode": g.mode,
-        "modes": MODES,
+        "elo": g.elo,
         "legal": _legal_map(b),
         "moves": [{"san": s, "uci": u, "color": "w" if i % 2 == 0 else "b"}
                   for i, (s, u) in enumerate(zip(g.history_san, g.history_uci))],
@@ -275,7 +333,7 @@ def state(g: Game) -> dict:
         "material": _material(b),
         "eval": {"cp": g.sf["eval_cp"], "mate": g.sf["mate"]} if g.sf else None,
         "engine": g.last_engine,
-        "grade": g.last_grade,
+        "grade": grade,
         "chat": g.chat[-40:],
         "thinking_ms": g.think_ms,
         "engine_turn": (not b.is_game_over(claim_draw=True)) and
@@ -285,7 +343,7 @@ def state(g: Game) -> dict:
 
 def summary(g: Game) -> dict:
     return {"id": g.id, "created": g.created, "updated": g.updated,
-            "human_color": g.human_color, "mode": g.mode,
+            "human_color": g.human_color, "elo": g.elo,
             "plies": len(g.history_uci), "result": g.result or "in progress",
             "last_moves": " ".join(g.history_san[-4:])}
 
@@ -293,7 +351,7 @@ def summary(g: Game) -> dict:
 # ---------------------------------------------------------------- models
 class NewReq(BaseModel):
     color: str = "w"
-    mode: str = "normal"
+    elo: int = ELO_DEFAULT
 
 
 class MoveReq(BaseModel):
@@ -306,7 +364,7 @@ class ChatReq(BaseModel):
 
 
 # ---------------------------------------------------------------- app
-app = FastAPI(title="ChessLFM")
+app = FastAPI(title="chess-engine")
 app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
 
 _migrate_legacy()
@@ -335,7 +393,7 @@ def list_games():
                 if g is not None:
                     out.append(summary(g))
     out.sort(key=lambda s: s["updated"], reverse=True)
-    return {"games": out, "modes": MODES, "retention_days": RETENTION_S // 86400}
+    return {"games": out, "elo_range": [ELO_MIN, ELO_MAX], "elo_default": ELO_DEFAULT, "retention_days": RETENTION_S // 86400}
 
 
 @app.post("/api/games")
@@ -343,8 +401,8 @@ def new_game(req: NewReq):
     with _lock:
         prune()
         g = create_game(req.color if req.color in ("w", "b") else "w",
-                        req.mode if req.mode in MODES else "normal")
-        g.sf = _sf_block(g, 12)
+                        _clamp_elo(req.elo))
+        _ensure_rec(g)
         if g.human_color == "b":
             _engine_play(g)
         _save(g)
@@ -356,21 +414,21 @@ def import_game(d: dict = Body(...)):
     """Turn an uploaded game file (what /file downloads) into a new game."""
     uci = d.get("uci")
     if not isinstance(uci, list) or len(uci) > 1000 or not all(isinstance(u, str) for u in uci):
-        raise HTTPException(400, "not a ChessLFM game file (missing 'uci' move list)")
+        raise HTTPException(400, "not a chess-engine game file (missing 'uci' move list)")
     chat = [{"role": c["role"], "content": c["content"][:4000]}
             for c in d.get("chat", [])[-40:]
             if isinstance(c, dict) and c.get("role") in ("user", "assistant")
             and isinstance(c.get("content"), str)]
     clean = {"id": _new_id(), "uci": uci, "chat": chat,
              "human_color": d.get("human_color") if d.get("human_color") in ("w", "b") else "w",
-             "mode": d.get("mode") if d.get("mode") in MODES else "normal"}
+             "elo": _clamp_elo(d.get("elo") or LEGACY_ELO.get(d.get("mode")))}
     try:
         g = _build(clean)
     except ValueError as e:
         raise HTTPException(400, f"invalid game file: {e}")
     with _lock:
         _GAMES[g.id] = g
-        g.sf = _sf_block(g, 12)
+        _ensure_rec(g)
         if not g.board.is_game_over(claim_draw=True) and \
                 ("w" if g.board.turn else "b") != g.human_color:
             _engine_play(g)
@@ -383,7 +441,7 @@ def download_game(gid: str):
     g = _need(gid)
     day = time.strftime("%Y%m%d", time.localtime(g.created))
     return FileResponse(_path(gid), media_type="application/json",
-                        filename=f"chesslfm-{day}-{gid}.json")
+                        filename=f"chess-engine-{day}-{gid}.json")
 
 
 @app.delete("/api/games/{gid}")
@@ -415,17 +473,11 @@ def human_move(gid: str, req: MoveReq):
             raise HTTPException(400, "bad move")
         if m not in g.board.legal_moves:
             raise HTTPException(400, "illegal move")
-        before = g.board.fen()
-        san = g.board.san(m)
-        g.board.push(m)
-        g.history_uci.append(m.uci())
-        g.history_san.append(san)
-        g.fens.append(g.board.fen())
-        g.last_grade = grade(before, g.board.fen(), SF, depth=9)
-        g.last_grade["san"] = san
+        _ensure_rec(g)
+        _push(g, m)
+        _ensure_rec(g)                  # judges the human's move
         if g.board.is_game_over(claim_draw=True):
             g.result = _result_text(g.board)
-            g.sf = _sf_block(g, 12)
             _save(g)
             return state(g)
         _engine_play(g)
@@ -457,19 +509,11 @@ def undo(gid: str):
         g.history_san = g.history_san[:keep]
         g.fens = g.fens[:keep + 1]
         g.result = None
-        g.last_engine = g.last_grade = None
-        g.sf = _sf_block(g, 10)
+        g.last_engine = None
+        g.rec = g.rec[:keep]
+        g.sf = None
+        _ensure_rec(g)
         _save(g)
-        return state(g)
-
-
-@app.post("/api/games/{gid}/mode")
-def set_mode(gid: str, req: NewReq):
-    with _lock:
-        g = _need(gid)
-        if req.mode in MODES:
-            g.mode = req.mode
-            _save(g)
         return state(g)
 
 
@@ -482,6 +526,20 @@ def hint(gid: str):
         return {"best": r["best"], "san": line["pv_san"][0] if line else None,
                 "cp": r["eval_cp"], "mate": r["mate"],
                 "pv": line["pv_san"] if line else []}
+
+
+def _tools_for(g: Game) -> dict:
+    """Stockfish-backed tools the narrator may call (what-if and threat checks)."""
+    def analyze_move(move: str) -> str:
+        with _lock:
+            _ensure_rec(g)
+            return explain.analyze_move(SF, g.board, move, g.sf, g.human_color)
+
+    def get_threats() -> str:
+        with _lock:
+            _ensure_rec(g)
+            return explain.threats(SF, g.board, g.sf, g.human_color)
+    return {"analyze_move": analyze_move, "get_threats": get_threats}
 
 
 @app.post("/api/games/{gid}/chat")
@@ -497,7 +555,7 @@ def chat(gid: str, req: ChatReq):
     def gen():
         acc = []
         try:
-            for delta in coach.stream_reply(g, q, hist):
+            for delta in coach.stream_reply(g, q, hist, tools=_tools_for(g)):
                 acc.append(delta)
                 yield "data: " + json.dumps({"delta": delta}) + "\n\n"
             g.chat.append({"role": "assistant", "content": "".join(acc)})
@@ -515,6 +573,7 @@ def chat(gid: str, req: ChatReq):
 @app.on_event("shutdown")
 def _shutdown():
     SF.quit()
+    PLAYER.quit()
 
 
 if __name__ == "__main__":
