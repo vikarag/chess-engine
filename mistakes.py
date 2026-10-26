@@ -28,9 +28,10 @@ LESSONS = {
     "development": "In the opening, bring a new piece into play with almost every move, instead of moving the same "
                    "piece again, pushing edge pawns or sending the queen out early.",
     "positional": "",
+    "unclear": "",
 }
 ORDER = ["walked into mate", "hanging piece", "undefended pawn", "allowed a tactic", "missed a chance",
-         "king safety", "development", "positional"]
+         "king safety", "development", "positional", "unclear"]
 
 
 def _line(board: chess.Board, sans: list[str], max_plies: int = 8):
@@ -82,7 +83,7 @@ def lost_material(board: chess.Board, move: chess.Move, refut_pv: list[str]) -> 
 
 
 def classify(board: chess.Board, move: chess.Move, best_san: str | None, refut_pv: list[str],
-             best_pv: list[str]) -> list[dict]:
+             best_pv: list[str], wl: float | None = None) -> list[dict]:
     """Types of mistake for `move` played on `board`: [{tag, detail, lesson}], most important first."""
     mover = board.turn
     a = board.copy(stack=False)
@@ -109,10 +110,12 @@ def classify(board: chess.Board, move: chess.Move, best_san: str | None, refut_p
                                           f"{NAME[taker.piece_type]} on {chess.square_name(first.from_square)}"
                                           + (" and nothing protects it" if undefended
                                              else ", a cheaper piece, so the exchange loses material"))
-    elif first is not None and lost >= 2:
+    elif first is not None and (lost >= 2 or (lost >= 1 and (a.is_capture(first) or a.gives_check(first)))):
+        # a forcing reply (check or capture) that wins material, even if a sacrifice is won back on the way
         motif = next((m for m in explain.move_motifs(a, first) if m.startswith(("forks", "pins", "discovers"))), None)
-        found["allowed a tactic"] = (f"your opponent's best reply {motif}" if motif else
-                                     "your opponent's best line wins material by force")
+        seq = explain.summarize_line(a, (refut_pv or [])[:6])
+        found["allowed a tactic"] = ((f"your opponent's best reply {motif}; " if motif else "")
+                                     + "your opponent has a forcing sequence that wins material: " + seq)
 
     if best_pv:
         bnet, bfin, bfirst = _line(board, best_pv)
@@ -147,7 +150,11 @@ def classify(board: chess.Board, move: chess.Move, best_san: str | None, refut_p
         elif p.piece_type == chess.PAWN and chess.square_file(move.from_square) in (0, 7):
             found["development"] = f"an edge-pawn move while {n} minor pieces are still at home ({behind[0]}, ...)"
 
-    if not found:
+    if not found and (wl or 0) >= 25:
+        # a blunder-sized drop whose cause none of the patterns names: never call that "positional"
+        found["unclear"] = ("a large loss whose cause is not one of the simple patterns; describe only the line "
+                            "given after the move and the better move, and do not call it positional")
+    elif not found:
         found["positional"] = ("no tactic or concrete weakness was found; the better move simply keeps a more "
                                "favourable position")
     return [{"tag": t, "detail": found[t], "lesson": LESSONS[t]} for t in ORDER if t in found][:2]
@@ -178,4 +185,11 @@ if __name__ == "__main__":      # self-check: python mistakes.py (needs no engin
     # nothing concrete -> positional, with no lesson text
     t = tags("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1", "e1d1", "e4", ["Kd7"], ["e4"])
     assert list(t) == ["positional"] and t["positional"]["lesson"] == "", t
+    # the Qh6 game: a queen sacrifice (Qf8+) that wins the queen back is a tactic, not "positional"
+    t = tags("4k1n1/p1pr2p1/5q2/2Q3p1/5P2/4p1Pr/1PP3K1/RNB2R2 b - - 0 20", "f6h6", "e2",
+             ["Qf8+", "Kxf8", "fxg5+", "Nf6", "gxh6", "e2", "Re1", "Rd1"], ["e2"])
+    assert "allowed a tactic" in t and "Qf8+ Kxf8 fxg5+" in t["allowed a tactic"]["detail"], t
+    # an unexplained blunder-sized drop is never called positional
+    b0 = chess.Board("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1")
+    assert [x["tag"] for x in classify(b0, chess.Move.from_uci("e1d1"), "e4", ["Kd7"], ["e4"], wl=30)] == ["unclear"]
     print("ok")

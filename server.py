@@ -36,7 +36,7 @@ os.makedirs(GAMES, exist_ok=True)
 _lock = threading.RLock()     # one engine, one Stockfish: compute is serialised
 print("[startup] starting Stockfish…", flush=True)
 JUDGE_BIN = os.path.join(HERE, "bin", "stockfish-19")           # official SF19 build, git-ignored
-JUDGE_ID = ("sf19" if os.path.exists(JUDGE_BIN) else "sf16") + "-w2"   # recorded in game files; bump to re-grade old games
+JUDGE_ID = ("sf19" if os.path.exists(JUDGE_BIN) else "sf16") + "-w3"   # recorded in game files; bump to re-grade old games
 SF = Stockfish(path=JUDGE_BIN if JUDGE_ID == "sf19" else "/usr/games/stockfish",
                threads=2, hash_mb=128)                          # judge: full strength, never plays
 PLAYER = Stockfish(threads=2, hash_mb=64)         # opponent: Stockfish 16, UCI_Elo-limited, only calls play()
@@ -225,6 +225,31 @@ def _result_text(b: chess.Board) -> str | None:
     return "Draw"
 
 
+VERIFY_DROP = 8      # winning-chance points: the top move "collapses" one ply later -> search deeper
+DEEP_DEPTH = 16      # ~0.8 s on this CPU
+
+
+def _verified(board: chess.Board, r: dict) -> dict:
+    """At depth 12 Stockfish can prune a sacrifice and name a top move that a search one ply later refutes
+    (it liked ...Qh6 until it saw Qf8+). Play the top move once; if its value collapses, search deeper.
+    This keeps the recommended move and the later grade of that move consistent."""
+    if not r["lines"] or r["mate"] is not None or not r["lines"][0].get("pv"):
+        return r
+    top = r["lines"][0]
+    after = board.copy(stack=False)
+    after.push(chess.Move.from_uci(top["pv"][0]))
+    if after.is_game_over(claim_draw=True):
+        return r
+    r2 = SF.analyse(after.fen(), depth=SF_DEPTH, multipv=1)
+    if r2["eval_cp"] is None and r2["mate"] is None:
+        return r
+    sign = 1 if board.turn == chess.WHITE else -1
+    w = lambda cp, mate: stats.win_pct(sign * (cp if mate is None else (10000 if mate > 0 else -10000)))
+    if w(top["cp"], top["mate"]) - w(r2["eval_cp"], r2["mate"]) >= VERIFY_DROP:
+        return SF.analyse(board.fen(), depth=DEEP_DEPTH, multipv=3)
+    return r
+
+
 def _sf_block(board: chess.Board, depth: int = SF_DEPTH) -> dict | None:
     """Full-strength judge analysis of a position (White-POV centipawns, 3 lines)."""
     if board.is_game_over(claim_draw=True):
@@ -234,7 +259,7 @@ def _sf_block(board: chess.Board, depth: int = SF_DEPTH) -> dict | None:
         return {"eval_cp": cp, "mate": None, "best": None, "best_san": None,
                 "depth": 0, "pv_san": [], "lines": []}
     try:
-        r = SF.analyse(board.fen(), depth=depth, multipv=3)
+        r = _verified(board, SF.analyse(board.fen(), depth=depth, multipv=3))
         lines = r["lines"]
         best_san = lines[0]["pv_san"][0] if lines and lines[0]["pv_san"] else r["best"]
         return {"eval_cp": r["eval_cp"], "mate": r["mate"], "best": r["best"],

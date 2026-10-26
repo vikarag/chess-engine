@@ -273,7 +273,7 @@ def _why_weak(state, i: int) -> str | None:
     out = [f"WHY {who.upper()}'S MOVE {r['san']} (move {i // 2 + 1}) WAS WEAK — rated '{r['label']}'{sw}. "
            "Explain this in your answer."]
     types = mistakes.classify(b, played, r.get("best"), (refut or {}).get("pv_san") or [],
-                              (best_before or {}).get("pv_san") or [])
+                              (best_before or {}).get("pv_san") or [], wl=r.get("wl"))
     for t in types:
         out.append(f"MISTAKE TYPE: {t['tag']} — {t['detail']}.")
     lesson = next((t["lesson"] for t in types if t["lesson"]), None)
