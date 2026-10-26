@@ -21,7 +21,14 @@
   .sub{color:var(--dim);font-size:12.5px}
   .grow{flex:1}
   .app{display:grid;grid-template-columns:minmax(320px,1fr) 420px;gap:20px;align-items:start}
-  @media(max-width:940px){.app{grid-template-columns:1fr}}
+  @media(max-width:940px){
+    /* one column: drop the two column wrappers so every panel can be ordered; chat sits right above New game */
+    .app{display:flex;flex-direction:column;align-items:stretch;gap:0}
+    .app > div{display:contents}
+    .app .panel{margin-top:14px !important}
+    #cap-top{order:1} .boardbox{order:2} #cap-bot{order:3} .status{order:4}
+    #chatpanel{order:5} #newpanel{order:6} #savedpanel{order:7} #oppanel{order:8} #movespanel{order:9}
+  }
 
   /* ---- board ---- */
   .boardbox{display:flex;gap:10px;align-items:stretch}
@@ -143,7 +150,7 @@
         <button id="undo">↶ Take back</button>
         <button id="hint">💡 Hint</button>
       </div>
-      <div class="panel" style="margin-top:14px">
+      <div class="panel" id="newpanel" style="margin-top:14px">
         <h2>New game</h2>
         <div class="row">
           <select id="color">
@@ -162,7 +169,7 @@
           </label>
         </div>
       </div>
-      <div class="panel" style="margin-top:14px">
+      <div class="panel" id="savedpanel" style="margin-top:14px">
         <div class="row" style="justify-content:space-between">
           <h2 style="margin:0">Saved games</h2><span class="sub">kept 15 days after the last move</span>
         </div>
@@ -178,7 +185,7 @@
     </div>
 
     <div>
-      <div class="panel">
+      <div class="panel" id="oppanel">
         <h2>Opponent</h2>
         <div class="engine-move">
           <b id="engmove">—</b><span class="tag" id="engprob"></span><span class="tag" id="engwp"></span>
@@ -187,12 +194,12 @@
         <div class="meta" id="gradeline" style="display:none"></div>
       </div>
 
-      <div class="panel">
+      <div class="panel" id="movespanel">
         <h2>Moves</h2>
         <div class="movelist"><table id="moves"></table></div>
       </div>
 
-      <div class="panel">
+      <div class="panel" id="chatpanel">
         <h2>Table talk</h2>
         <div class="chat">
           <div class="msgs" id="msgs"></div>
