@@ -103,7 +103,9 @@
   .cap img{width:22px;height:22px}
   .cap .none{opacity:.55}
   .cap .lead{margin-left:8px;font-weight:700}
-  .saved{display:flex;flex-direction:column;gap:2px;max-height:210px;overflow:auto;font-size:13px}
+  .saved{font-size:13px}
+  /* a row is 27.5px (19.5 line + 8 padding) with a 2px gap: show 5, scroll the rest */
+  .saved-list{display:flex;flex-direction:column;gap:2px;max-height:calc(5 * 27.5px + 4 * 2px);overflow-y:auto}
   .saved-item{display:flex;gap:8px;padding:4px 8px;border-radius:6px;cursor:pointer;white-space:nowrap}
   .saved-item:hover{background:var(--panel2)}
   .saved-item.cur{background:#1c2f26;color:var(--acc);cursor:default}
@@ -141,19 +143,6 @@
         <button id="hint">💡 Hint</button>
       </div>
       <div class="panel" style="margin-top:14px">
-        <div class="row" style="justify-content:space-between">
-          <h2 style="margin:0">Saved games</h2><span class="sub">kept 15 days after the last move</span>
-        </div>
-        <div style="height:10px"></div>
-        <div id="saved" class="saved"></div>
-        <div class="row" style="margin-top:10px;gap:8px">
-          <button id="delgame" title="Delete the open game">Delete game</button>
-          <span class="grow"></span>
-          <button id="loadfile" title="Open a game file saved earlier">Load game file</button>
-          <input type="file" id="gamefile" accept=".json,application/json" hidden>
-        </div>
-      </div>
-      <div class="panel" style="margin-top:14px">
         <h2>New game</h2>
         <div class="row">
           <select id="color">
@@ -170,6 +159,19 @@
           <label class="sub" style="display:flex;gap:6px;align-items:center;cursor:pointer">
             <input type="checkbox" id="chatty" checked style="width:auto"> auto-comment
           </label>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">Saved games</h2><span class="sub">kept 15 days after the last move</span>
+        </div>
+        <div style="height:10px"></div>
+        <div id="saved" class="saved"></div>
+        <div class="row" style="margin-top:10px;gap:8px">
+          <button id="delgame" title="Delete the open game">Delete game</button>
+          <span class="grow"></span>
+          <button id="loadfile" title="Open a game file saved earlier">Load game file</button>
+          <input type="file" id="gamefile" accept=".json,application/json" hidden>
         </div>
       </div>
     </div>
@@ -569,13 +571,19 @@ async function refreshSaved(){
     return el;
   };
   const cut = Date.now() / 1000 - 86400;
-  list.games.filter(g => g.updated >= cut).forEach(g => box.appendChild(row(g)));
+  const recent = document.createElement('div');
+  recent.className = 'saved-list';
+  list.games.filter(g => g.updated >= cut).forEach(g => recent.appendChild(row(g)));
+  box.appendChild(recent);
   const older = list.games.filter(g => g.updated < cut);
   if (older.length){
     const det = document.createElement('details');
     det.innerHTML = `<summary>Older (${older.length})</summary>`;
     if (older.some(g => g.id === GID)) det.open = true;
-    older.forEach(g => det.appendChild(row(g)));
+    const olist = document.createElement('div');
+    olist.className = 'saved-list';
+    older.forEach(g => olist.appendChild(row(g)));
+    det.appendChild(olist);
     box.appendChild(det);
   }
 }
