@@ -2,6 +2,8 @@
 
 A web chess opponent you can talk to. It plays with Stockfish limited to the Elo you choose (1500–2800), a second full-strength Stockfish judges every move, and an LLM commentator explains the game using only facts computed from those two.
 
+![A game in progress: the board with captured-piece strips, the move list, and the commentator answering "What is my best move now?"](docs/screenshot.png)
+
 Earlier versions used the small LFM2.5-230M-Chess language model as the opponent; it was too weak, so it was replaced (see the git history).
 
 ## How it works
