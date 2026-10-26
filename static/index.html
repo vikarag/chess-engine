@@ -85,9 +85,6 @@
   .msg.user{align-self:flex-end;background:#2b4a6b;border-bottom-right-radius:3px}
   .msg.bot{align-self:flex-start;background:#232b38;border:1px solid #2c3545;border-bottom-left-radius:3px}
   .msg.bot.think{color:var(--dim);font-style:italic}
-  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:9px 0}
-  .chip{font-size:12px;padding:4px 9px;border-radius:999px;background:#202836;border:1px solid var(--line);color:#a9b6c7;cursor:pointer}
-  .chip:hover{border-color:#46536a;color:#e7ecf3}
   .send{display:flex;gap:7px}
   .send input{flex:1;min-width:0}
   .grade{font-size:12.5px;padding:2px 8px;border-radius:999px;border:1px solid}
@@ -139,6 +136,7 @@
         <span class="pill" id="evalpill">–</span>
         <span id="spin" style="display:none" class="spinner"></span>
         <span class="grow"></span>
+        <button id="savefile" title="Download the open game as a .json file">Save current game as file</button>
         <button id="undo">↶ Take back</button>
         <button id="hint">💡 Hint</button>
       </div>
@@ -149,7 +147,6 @@
         <div style="height:10px"></div>
         <div id="saved" class="saved"></div>
         <div class="row" style="margin-top:10px;gap:8px">
-          <button id="savefile" title="Download the open game as a .json file">Save game as file</button>
           <button id="delgame" title="Delete the open game">Delete game</button>
           <span class="grow"></span>
           <button id="loadfile" title="Open a game file saved earlier">Load game file</button>
@@ -196,12 +193,6 @@
         <h2>Table talk</h2>
         <div class="chat">
           <div class="msgs" id="msgs"></div>
-          <div class="chips">
-            <span class="chip" data-q="Why did you play that move?">Why that move?</span>
-            <span class="chip" data-q="What is my biggest threat right now?">My threat?</span>
-            <span class="chip" data-q="What is the plan for both sides in this position?">Plan?</span>
-            <span class="chip" data-q="Did I blunder? Be honest.">Did I blunder?</span>
-          </div>
           <div class="send">
             <input id="chatinput" placeholder="Ask about the position, tactics, or its move…">
             <button class="primary" id="send">Send</button>
@@ -486,7 +477,6 @@ $('#send').onclick = () => {
   ask(v);
 };
 $('#chatinput').addEventListener('keydown', e => { if (e.key === 'Enter') $('#send').click(); });
-document.querySelectorAll('.chip').forEach(c => c.onclick = () => ask(c.dataset.q));
 
 $('#newgame').onclick = createGame;
 $('#elo').oninput = e => $('#elov').textContent = e.target.value;
