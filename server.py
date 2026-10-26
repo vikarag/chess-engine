@@ -547,7 +547,20 @@ def _tools_for(g: Game) -> dict:
         with _lock:
             _ensure_rec(g)
             return explain.threats(SF, g.board, g.sf, g.human_color)
-    return {"analyze_move": analyze_move, "get_threats": get_threats}
+    def explain_past_move(move_number: int, side: str = "human") -> str:
+        with _lock:
+            _ensure_rec(g)
+            human_is_white = g.human_color == "w"
+            white_moves = (side == "human") == human_is_white
+            i = 2 * (int(move_number) - 1) + (0 if white_moves else 1)
+            if i < 0 or i >= len(g.rec):
+                return f"There is no {side} move number {move_number} in this game."
+            text = coach._why_weak(g, i)
+            return text or (f"Move {g.rec[i]['san']} was rated '{g.rec[i]['label']}', not an "
+                            "inaccuracy, mistake or blunder, so there is nothing to explain.")
+
+    return {"analyze_move": analyze_move, "get_threats": get_threats,
+            "explain_past_move": explain_past_move}
 
 
 @app.post("/api/games/{gid}/chat")

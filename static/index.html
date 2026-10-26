@@ -105,6 +105,8 @@
   .chat{display:flex;flex-direction:column;height:340px}
   .msgs{flex:1;overflow:auto;display:flex;flex-direction:column;gap:9px;padding-right:4px}
   .msg{max-width:92%;padding:8px 11px;border-radius:11px;font-size:13.8px;white-space:pre-wrap;word-break:break-word}
+  .msg strong{font-weight:700;color:#fff}
+  .msg em{font-style:italic}
   .msg.user{align-self:flex-end;background:#2b4a6b;border-bottom-right-radius:3px}
   .msg.bot{align-self:flex-start;background:#232b38;border:1px solid #2c3545;border-bottom-left-radius:3px}
   .msg.note{align-self:center;background:none;border:1px dashed #3a4454;color:var(--dim);font-size:12px;font-style:italic}
@@ -449,10 +451,21 @@ function renderPanels(){
 }
 
 /* ---------------- chat ---------------- */
+// Commentator text may contain *italic* and **bold**. Escape everything first, then turn only those
+// markers into <em>/<strong>, so a reply can never inject markup. (No regex lookbehind: older Safari.)
+function fmt(text){
+  const esc = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return esc
+    .replace(/\*\*\*([^*\n](?:[^*\n]*[^*\n])?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(?=[^\s*])((?:(?!\*\*)[\s\S])*?[^\s*])\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*\s](?:[^*\n]*?[^*\s])?)\*(?!\*)/g, '<em>$1</em>');
+}
+
 function bubble(role, text){
   const d = document.createElement('div');
   d.className = 'msg ' + role;
-  d.textContent = text;
+  if (role === 'bot') d.innerHTML = fmt(text); else d.textContent = text;
   $('#msgs').appendChild(d);
   $('#msgs').scrollTop = $('#msgs').scrollHeight;
   return d;
@@ -478,11 +491,11 @@ async function ask(text, silent = false){
       for (const p of parts){
         if (!p.startsWith('data: ')) continue;
         const obj = JSON.parse(p.slice(6));
-        if (obj.delta){ acc += obj.delta; out.textContent = acc; out.classList.remove('think'); }
+        if (obj.delta){ acc += obj.delta; out.innerHTML = fmt(acc); out.classList.remove('think'); }
       }
       $('#msgs').scrollTop = $('#msgs').scrollHeight;
     }
-  } catch(e){ out.textContent = acc + ' [connection error]'; }
+  } catch(e){ out.innerHTML = fmt(acc + ' [connection error]'); }
   if (!acc) out.textContent = '(no reply)';
   out.classList.remove('think');
 }
@@ -491,7 +504,7 @@ function maybeAutoComment(){
   if (!$('#chatty').checked || !S.engine || S.over) return;
   const g = S.grade;
   ask(g && g.san
-    ? `Comment on my last move (${g.san}) and where I stand now, in two or three sentences. Say very little about the opponent's reply.`
+    ? `Comment on my last move (${g.san}) and where I stand now, in two to four sentences. If it was an inaccuracy, mistake or blunder, say why it was weak. Say very little about the opponent's reply.`
     : `The opponent just played ${S.engine.san}. Comment on it in one short sentence.`, true);
 }
 

@@ -85,6 +85,13 @@ defends, or prepares. One well-explained idea beats a vague list.
 mistakes and chances, and on how the human's position stands: grade their last \
 move from the brief, say what it did or missed, and what they could consider next. \
 Mention the opponent's last move in a clause at most, unless asked.
+- WHENEVER you call a move of the human's an inaccuracy, mistake or blunder, explain \
+WHY in the same answer, using the "WHY ... WAS WEAK" section: state the concrete \
+consequence first (what the opponent can now do with which move, what was left \
+undefended or lost, or that the cost is positional), then what the better move does \
+instead. Never give only the label and the cp loss. If the section says the cause is \
+positional, say that plainly instead of inventing a tactic. For an earlier move, call \
+explain_past_move(move_number).
 - Tone: professional, calm and supportive. Give practical, actionable guidance \
 (what to look for, what to consider next) rather than commentary for its own sake. \
 When the human errs, name the error plainly and say what would have been better; \
@@ -244,6 +251,63 @@ def _human_move_explained(state) -> str:
         else:
             out.append("It was the best move available. Expected line: "
                        + explain.summarize_line(b, best["pv_san"]) + ".")
+    why = _why_weak(state, i)
+    if why:
+        out += ["", why]
+    return "\n".join(out)
+
+
+WEAK = ("inaccuracy", "mistake", "blunder")
+
+
+def _why_weak(state, i: int) -> str | None:
+    """Concrete reasons ply i (a rated-weak move) was worse than the best move, from computed facts only."""
+    rec, hc = state.rec, state.human_color
+    if i < 0 or i >= len(rec) or rec[i].get("label") not in WEAK:
+        return None
+    r = rec[i]
+    who = "the human" if r["color"] == hc else "the opponent"
+    sign = 1 if r["color"] == "w" else -1                     # White-POV net -> mover's POV
+    b = chess.Board()
+    for u in state.history_uci[:i]:
+        b.push(chess.Move.from_uci(u))
+    played = chess.Move.from_uci(state.history_uci[i])
+    after = b.copy(stack=False)
+    after.push(played)
+    best_before = (r.get("lines") or [None])[0]
+    nxt = rec[i + 1].get("lines") if i + 1 < len(rec) else (state.sf or {}).get("lines")
+    refut = (nxt or [None])[0]
+    out = [f"WHY {who.upper()}'S MOVE {r['san']} (move {i // 2 + 1}) WAS WEAK — "
+           f"rated '{r['label']}', {r['loss']} cp worse than the best move. Explain this in your answer."]
+    if refut and refut.get("pv_san"):
+        net, mate, first = explain.line_net(after, refut["pv_san"])
+        mine = net * sign                                      # material change for the mover over the line
+        if mate and mine <= 0:
+            cause = f"tactical: the best reply leads to checkmate against {who}"
+        elif mine <= -3:
+            cause = f"tactical: it loses material; over the best line {who} ends {abs(mine)} pawn-points down"
+        elif mine < 0:
+            cause = f"tactical: it loses {abs(mine)} pawn-point(s) of material over the best line"
+        else:
+            cause = ("positional: no material is lost in the best line; the cost is that the position "
+                     "becomes worse for " + who + ". Say so honestly; give a concrete reason only if one "
+                     "is listed below, otherwise say the better move keeps a larger advantage")
+        out.append("Cause: " + cause + ".")
+        if first is not None:
+            out.append("The opponent's best reply: " if r["color"] == hc else "The human's best reply: ")
+            out[-1] += explain.describe_move(after, first) + "."
+        out.append("Line after the weak move: " + explain.summarize_line(after, refut["pv_san"]) + ".")
+    notes = explain.move_motifs(b, played)
+    bad = [n for n in notes if "en prise" in n or "leaves" in n]
+    if bad:
+        out.append(f"What the move itself gave away: {', '.join(bad)}.")
+    if r.get("best") and r["best"] != r["san"] and best_before and best_before.get("pv_san"):
+        try:
+            bm = b.parse_san(r["best"])
+            out.append("The better move: " + explain.describe_move(b, bm) + ".")
+        except ValueError:
+            pass
+        out.append("Its line: " + explain.summarize_line(b, best_before["pv_san"]) + ".")
     return "\n".join(out)
 
 
@@ -291,6 +355,11 @@ def templated_reply(brief_state, question: str) -> str:
     return " ".join(parts)
 
 
+# reasoning is off by default (a reasoning model can spend the whole budget thinking and return no
+# answer); experiments override these two module-level settings
+REASONING = {"enabled": False}
+MAX_TOKENS = 700
+
 TOOL_SPECS = [
     {"type": "function", "function": {
         "name": "analyze_move",
@@ -300,6 +369,16 @@ TOOL_SPECS = [
         "parameters": {"type": "object", "properties": {"move": {
             "type": "string", "description": "legal move for the side to move, SAN (Nf3) or UCI (g1f3)"}},
             "required": ["move"]}}},
+    {"type": "function", "function": {
+        "name": "explain_past_move",
+        "description": "Why a move already played in this game was weak (what it allowed or lost, "
+                       "the opponent's best reply, the better move). Use it when asked why an EARLIER "
+                       "inaccuracy, mistake or blunder was bad.",
+        "parameters": {"type": "object", "properties": {"move_number": {
+            "type": "integer", "description": "full-move number as shown in the move list (1, 2, 3...)"},
+            "side": {"type": "string", "enum": ["human", "opponent"],
+                     "description": "whose move; default human"}},
+            "required": ["move_number"]}}},
     {"type": "function", "function": {
         "name": "get_threats",
         "description": "What the opponent would do if the side to move passed (null-move search): "
@@ -364,10 +443,10 @@ def stream_reply(state, question: str, history: list[dict], tools: dict | None =
         with httpx.Client(timeout=60) as client:
             for rnd in range(4):                   # up to 3 tool rounds, then a final answer
                 payload = {"model": MODEL, "messages": msgs, "temperature": 0.6,
-                           "max_tokens": 700, "stream": True,
+                           "max_tokens": MAX_TOKENS, "stream": True,
                            # a reasoning model left alone can burn the whole budget on
                            # `reasoning` and emit content=null: turn thinking off
-                           "reasoning": {"enabled": False}}
+                           "reasoning": REASONING}
                 if _provider_pref():
                     payload["provider"] = _provider_pref()
                 if use_tools and rnd < 3:

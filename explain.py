@@ -74,6 +74,23 @@ def _pn(b: chess.Board, sq: int) -> str:
 CENTRE = {chess.D4, chess.E4, chess.D5, chess.E5}
 
 
+def line_net(board: chess.Board, sans: list[str], max_plies: int = 8):
+    """Replay a line: (net material change White-minus-Black in pawns, ends in mate?, first move or None)."""
+    b = board.copy(stack=False)
+    start, first, mate = _mat(b), None, False
+    for san in sans[:max_plies]:
+        try:
+            m = b.parse_san(san)
+        except ValueError:
+            break
+        first = first or m
+        b.push(m)
+        if b.is_checkmate():
+            mate = True
+            break
+    return _mat(b) - start, mate, first
+
+
 def move_motifs(board: chess.Board, move: chess.Move) -> list[str]:
     """Explicit facts about one move, played from `board` (the position before it)."""
     b = board.copy(stack=False)
@@ -250,6 +267,9 @@ if __name__ == "__main__":      # self-check: python explain.py (needs no engine
     assert "castles kingside" in move_motifs(chess.Board("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"), chess.Move.from_uci("e1g1"))
     q = describe_move(chess.Board("4k3/8/8/8/8/8/8/R3K3 w - - 0 1"), chess.Move.from_uci("a1a2"))
     assert "no immediate tactical effect" in q, q
+    net, mate, first = line_net(b, ["Nxe5", "Nxe5", "d4"])
+    assert net == -2 and not mate and first == chess.Move.from_uci("f3e5"), (net, mate, first)   # +1 pawn, -3 knight
+    assert line_net(chess.Board("6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1"), ["Ra8#"])[1] is True
     s = summarize_line(b, ["Nxe5", "Nxe5", "d4"])
     assert "White takes a pawn (Nxe5)" in s and "Black takes a knight (Nxe5)" in s, s
     assert summarize_line(b, ["Bc4", "Bc5"]).endswith("material stays level")
