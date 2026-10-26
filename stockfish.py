@@ -96,7 +96,7 @@ class Stockfish:
                 "eval_cp": out[0]["cp"] if out else None,
                 "mate": out[0]["mate"] if out else None}
 
-    def play(self, fen: str, elo: int, max_depth: int = 7, movetime_ms: int = 3000) -> str:
+    def play(self, fen: str, elo: int, max_depth: int = 12, movetime_ms: int = 3000) -> str:
         """Best move (uci) at a limited strength (Stockfish 16 accepts UCI_Elo 1320-3190).
         The search ends at max_depth plies or movetime_ms, whichever comes first."""
         with self.lock:

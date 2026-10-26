@@ -101,6 +101,11 @@
   .promo button{display:flex;flex-direction:column;align-items:center;gap:5px;padding:8px 10px}
   .promo .pv{width:44px;height:44px;background-size:contain;background-repeat:no-repeat;background-position:center}
   #err{display:none;background:#3a1d1d;border:1px solid #6b2f2f;color:#ffb4ab;padding:10px 12px;border-radius:8px;margin-bottom:12px;font-size:13px}
+  .cap{display:flex;align-items:center;gap:1px;min-height:28px;margin:6px 0;padding:2px 10px;border-radius:8px;background:#d9c9a8;color:#4a4030;font-size:12px}
+  .cap .lbl{margin-right:8px;font-weight:600}
+  .cap img{width:22px;height:22px}
+  .cap .none{opacity:.55}
+  .cap .lead{margin-left:8px;font-weight:700}
   .saved{display:flex;flex-direction:column;gap:2px;max-height:210px;overflow:auto;font-size:13px}
   .saved-item{display:flex;gap:8px;padding:4px 8px;border-radius:6px;cursor:pointer;white-space:nowrap}
   .saved-item:hover{background:var(--panel2)}
@@ -113,7 +118,7 @@
 <div class="wrap">
   <header>
     <h1>Chess</h1>
-    <span class="sub">Stockfish opponent · adjustable Elo 1500–2500</span>
+    <span class="sub">Stockfish opponent · adjustable Elo 1500–2800</span>
     <span class="grow"></span>
     <span class="sub" id="gameid"></span>
     <span class="sub" id="modelbadge">board: chessground 9.2</span>
@@ -123,10 +128,12 @@
 
   <div class="app">
     <div>
+      <div class="cap" id="cap-top"></div>
       <div class="boardbox">
         <div class="evalbar" title="Stockfish evaluation"><div class="fill" id="evalfill" style="height:50%"></div></div>
         <div class="boardwrap"><div id="board"></div></div>
       </div>
+      <div class="cap" id="cap-bot"></div>
       <div class="status">
         <span class="pill" id="status">…</span>
         <span class="pill" id="evalpill">–</span>
@@ -158,7 +165,7 @@
             <option value="b">Play Black</option>
           </select>
           <label class="sub" style="display:flex;gap:8px;align-items:center" title="Opponent strength, fixed for the whole game">
-            Elo <input type="range" id="elo" min="1500" max="2500" step="100" value="1800" style="width:130px;padding:0">
+            Elo <input type="range" id="elo" min="1500" max="2800" step="100" value="1800" style="width:130px;padding:0">
             <b id="elov" style="color:var(--txt);min-width:34px">1800</b>
           </label>
           <button class="primary" id="newgame">Start</button>
@@ -353,7 +360,24 @@ async function sendMove(uci){
 }
 
 /* ---------------- panels ---------------- */
+const CAP_VAL = {pawn:1, knight:3, bishop:3, rook:5, queen:9};
+const CAP_LET = {pawn:'P', knight:'N', bishop:'B', rook:'R', queen:'Q'};
+function capRow(el, label, taker, names, lead){
+  const pieces = [...names].sort((a, b) => CAP_VAL[b] - CAP_VAL[a])
+    .map(n => `<img alt="${n}" title="${n}" src="/static/pieces/${taker === 'w' ? 'b' : 'w'}${CAP_LET[n]}.svg">`).join('');
+  el.innerHTML = `<span class="lbl">${label}</span>` + (pieces || '<span class="none">nothing yet</span>')
+               + (lead > 0 ? `<span class="lead">+${lead}</span>` : '');
+}
+function renderCaptured(){
+  const c = S.captured || {w: [], b: []}, sum = a => a.reduce((t, n) => t + CAP_VAL[n], 0);
+  const me = S.human_color, opp = me === 'w' ? 'b' : 'w';
+  const lead = sum(c[me]) - sum(c[opp]);          // + = you are ahead on captured material
+  capRow($('#cap-top'), 'Opponent took', opp, c[opp], -lead);
+  capRow($('#cap-bot'), 'You took', me, c[me], lead);
+}
+
 function renderPanels(){
+  renderCaptured();
   const myTurn = S.turn === S.human_color && !S.over;
   const st = $('#status');
   st.textContent = S.over ? (S.result || 'Game over')

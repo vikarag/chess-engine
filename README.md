@@ -1,6 +1,6 @@
 # chess-engine
 
-A web chess opponent you can talk to. It plays with Stockfish limited to the Elo you choose (1500–2500), a second full-strength Stockfish judges every move, and an LLM commentator explains the game using only facts computed from those two.
+A web chess opponent you can talk to. It plays with Stockfish limited to the Elo you choose (1500–2800), a second full-strength Stockfish judges every move, and an LLM commentator explains the game using only facts computed from those two.
 
 Earlier versions used the small LFM2.5-230M-Chess language model as the opponent; it was too weak, so it was replaced (see the git history).
 
@@ -8,7 +8,7 @@ Earlier versions used the small LFM2.5-230M-Chess language model as the opponent
 
 | layer | does | with |
 |---|---|---|
-| **plays** | picks the opponent's moves | Stockfish with `UCI_LimitStrength` + `UCI_Elo`, search capped at depth 7 |
+| **plays** | picks the opponent's moves | Stockfish with `UCI_LimitStrength` + `UCI_Elo`, search capped at depth 12 |
 | **judges** | evals, best lines, grades every move (yours and the opponent's), hints | a separate full-strength Stockfish (depth 12, 3 lines) |
 | **talks** | table talk, whole-game stats, explanations of *why* | any OpenAI-compatible LLM via OpenRouter, handed only computed facts |
 
@@ -18,9 +18,9 @@ The judge never plays and the player never analyses, so the commentary can say "
 
 **Why a move was played.** Stockfish gives numbers and lines, not reasons, so "why" is built from them: what the expected line wins or loses, tactical patterns the move creates (fork, pin, discovered attack, piece left en prise), the gap to other candidate moves, and what the opponent would do if the side to move passed. The LLM can also call two tools that run the judge: `analyze_move` ("what if I play X?", "why not X?") and `get_threats`. If the real reason is positional and no pattern applies, it is told to say so rather than invent one.
 
-**Elo and depth.** In limited-strength mode Stockfish picks its move at a fixed depth of roughly the skill level + 1 (about 7 plies at Elo 2500), then adds randomness, which is why a depth cap of 7 matches the top of the slider. The Elo numbers are on Stockfish's engine scale; they are not verified against human ratings.
+**Elo and depth.** In limited-strength mode Stockfish picks its move at a fixed depth of roughly the skill level + 1 (about 7 plies at Elo 2500 and 11 at Elo 2800), then adds randomness. The depth cap of 12 sits just above what the top of the slider needs, so it never weakens the engine. The Elo numbers are on Stockfish's engine scale; they are not verified against human ratings.
 
-Other features: chessground board (the one lichess uses), Play Random/White/Black, hints, take-back, eval bar, per-game URLs (`/g/<id>`) that survive refresh, a saved-games list (games older than 24h are grouped, deleted after 15 days idle), and downloading a game as a `.json` file, deleting it, or loading a file back in.
+Other features: chessground board (the one lichess uses), Play Random/White/Black, hints, take-back, eval bar, captured-pieces strips above and below the board (what each side has taken, with the material lead), per-game URLs (`/g/<id>`) that survive refresh, a saved-games list (games older than 24h are grouped, deleted after 15 days idle), and downloading a game as a `.json` file, deleting it, or loading a file back in.
 
 ## Run
 

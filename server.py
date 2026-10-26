@@ -40,7 +40,7 @@ SF = Stockfish(path=JUDGE_BIN if JUDGE_ID == "sf19" else "/usr/games/stockfish",
 PLAYER = Stockfish(threads=2, hash_mb=64)         # opponent: Stockfish 16, UCI_Elo-limited, only calls play()
 print("[startup] ready", flush=True)
 
-ELO_MIN, ELO_MAX, ELO_DEFAULT = 1500, 2500, 1800
+ELO_MIN, ELO_MAX, ELO_DEFAULT = 1500, 2800, 1800
 SF_DEPTH = 12                                     # judge depth for every recorded position
 LEGACY_ELO = {"casual": 1500, "normal": 1700, "strong": 2000}   # games saved before Elo existed
 
@@ -329,6 +329,7 @@ def state(g: Game) -> dict:
         "last_move": [last[:2], last[2:4]] if last else None,
         "check": b.is_check(),
         "over": b.is_game_over(claim_draw=True),
+        "captured": stats.captures(g.history_uci),   # pieces each colour has taken, by name
         "result": g.result or _result_text(b),
         "material": _material(b),
         "eval": {"cp": g.sf["eval_cp"], "mate": g.sf["mate"]} if g.sf else None,
