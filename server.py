@@ -418,7 +418,7 @@ def import_game(d: dict = Body(...)):
         raise HTTPException(400, "not a chess-engine game file (missing 'uci' move list)")
     chat = [{"role": c["role"], "content": c["content"][:4000]}
             for c in d.get("chat", [])[-40:]
-            if isinstance(c, dict) and c.get("role") in ("user", "assistant")
+            if isinstance(c, dict) and c.get("role") in ("user", "assistant", "note")
             and isinstance(c.get("content"), str)]
     clean = {"id": _new_id(), "uci": uci, "chat": chat,
              "human_color": d.get("human_color") if d.get("human_color") in ("w", "b") else "w",
@@ -505,6 +505,7 @@ def undo(gid: str):
         if ("w" if b.turn else "b") != g.human_color and keep > 0:
             keep -= 1
             b = replay(keep)
+        taken_back = g.history_san[keep:]
         g.board = b
         g.history_uci = g.history_uci[:keep]
         g.history_san = g.history_san[:keep]
@@ -514,6 +515,12 @@ def undo(gid: str):
         g.rec = g.rec[:keep]
         g.sf = None
         _ensure_rec(g)
+        # the commentator must not trust its earlier remarks about moves that no longer exist
+        g.chat.append({"role": "note", "content":
+                       f"Take-back: the human took back {len(taken_back)} move(s) ({', '.join(taken_back)}). "
+                       f"The game is now at move {g.board.fullmove_number}, "
+                       f"{'White' if g.board.turn else 'Black'} to move. Earlier chat remarks about the "
+                       "taken-back moves no longer apply; the current position is the truth."})
         _save(g)
         return state(g)
 
@@ -549,7 +556,11 @@ def chat(gid: str, req: ChatReq):
     q = (req.message or "").strip()
     if not q:
         raise HTTPException(400, "empty message")
-    hist = [c for c in g.chat[-8:] if c["role"] in ("user", "assistant")]
+    # only what was said after the latest take-back is still valid; the note itself goes first
+    cut = max((i for i, c in enumerate(g.chat) if c["role"] == "note"), default=-1)
+    hist = [c for c in g.chat[cut + 1:][-8:] if c["role"] in ("user", "assistant")]
+    if cut >= 0:
+        hist.insert(0, {"role": "system", "content": g.chat[cut]["content"]})
     if not req.silent:
         g.chat.append({"role": "user", "content": q})
 

@@ -84,6 +84,7 @@
   .msg{max-width:92%;padding:8px 11px;border-radius:11px;font-size:13.8px;white-space:pre-wrap;word-break:break-word}
   .msg.user{align-self:flex-end;background:#2b4a6b;border-bottom-right-radius:3px}
   .msg.bot{align-self:flex-start;background:#232b38;border:1px solid #2c3545;border-bottom-left-radius:3px}
+  .msg.note{align-self:center;background:none;border:1px dashed #3a4454;color:var(--dim);font-size:12px;font-style:italic}
   .msg.bot.think{color:var(--dim);font-style:italic}
   .send{display:flex;gap:7px}
   .send input{flex:1;min-width:0}
@@ -511,7 +512,7 @@ function showGame(){
   renderPanels();
   $('#gameid').textContent = 'game ' + S.id;
   $('#msgs').innerHTML = '';
-  (S.chat || []).forEach(m => bubble(m.role === 'user' ? 'user' : 'bot', m.content));
+  (S.chat || []).forEach(m => bubble(m.role === 'user' ? 'user' : m.role === 'note' ? 'note' : 'bot', m.content));
 }
 
 async function openGame(id, push){
@@ -596,7 +597,11 @@ window.addEventListener('popstate', () => {
 $('#undo').onclick = async () => {
   busy = true; renderPanels();
   const r = await fetch(api('/undo'), {method:'POST'});
-  if (r.ok) S = await r.json();
+  if (r.ok){
+    S = await r.json();
+    const last = (S.chat || []).slice(-1)[0];
+    if (last && last.role === 'note') bubble('note', last.content);   // show where the take-back happened
+  }
   busy = false;
   syncBoard();
   renderPanels();
