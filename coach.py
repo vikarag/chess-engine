@@ -53,7 +53,8 @@ You will receive an ANALYSIS BRIEF built from real engine output. Hard rules:
 - Only make chess claims supported by the brief. Never invent variations, \
 tactics, threats, or evaluations that are not in it.
 - If you quote a line, quote the principal variation given in the brief.
-- Numbers you cite (percentages, evaluations, centipawns) must come from the brief.
+- Numbers you cite (percentages, evaluations, cp losses) must come from the brief.
+- Always write the abbreviation "cp" (e.g. "lost 90 cp"); never write the word "centipawn" or "centipawns".
 - Evaluations are given from your own point of view in a dedicated line; use that \
 line, never call a White-POV score "mine".
 - Length: 1-3 sentences for a quick remark or a one-line reply. When the user asks \
@@ -85,7 +86,7 @@ named there, the eval gap to other moves). If the real reason is positional and 
 no pattern is listed, say Stockfish simply rates it higher by N cp rather than \
 inventing a concept. For your own moves, remember you play at a limited \
 strength: if the judge preferred another move, say so honestly.
-- When you quote a move's grade, use the label and centipawn loss from the brief; \
+- When you quote a move's grade, use the label and cp loss from the brief; \
 "best X" in the move list is the move Stockfish preferred instead.
 """
 
@@ -157,7 +158,7 @@ def build_brief(state) -> str:
 
     if rec:
         hs, bs = stats.side_stats(rec, hc), stats.side_stats(rec, bc)
-        lines += ["", "STATS (centipawn loss = how much a move cost versus Stockfish's best; lower is better)"]
+        lines += ["", "STATS (cp loss = how much a move cost versus Stockfish's best, in hundredths of a pawn; lower is better)"]
         for who, st in ((f"Human ({human})", hs), (f"You ({bot})", bs)):
             if st:
                 lines.append(f"{who}: {st['moves']} moves, accuracy {st['accuracy']}%, "
@@ -237,7 +238,7 @@ def templated_reply(brief_state, question: str) -> str:
                      + (f", main line {pv}" if pv else "") + ".")
     mine = [r for r in s.rec if r["color"] == s.human_color]
     if mine and mine[-1]["label"] in ("mistake", "blunder", "inaccuracy"):
-        parts.append(f"Your last move was an {mine[-1]['label']} ({mine[-1]['loss']} centipawns).")
+        parts.append(f"Your last move was an {mine[-1]['label']} ({mine[-1]['loss']} cp).")
     parts.append("(Chat narration is running in offline mode — the narrator did not answer.)")
     return " ".join(parts)
 
