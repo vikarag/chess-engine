@@ -42,6 +42,22 @@
   /* chessground caches an inline px size at init; keep it glued to the wrapper */
   #board cg-container{width:100%!important;height:100%!important}
   #board cg-board{border-radius:10px}
+  /* board labels: rank numbers in the top-left corner of the left-edge squares, file letters in the
+     bottom-right corner of the bottom-edge squares, same 3px/4px inset. Overrides chessground's
+     hand-tuned offsets (top:-20px, translateY(39%), bottom:-4px, left:24px) that misaligned them. */
+  .cg-wrap coords{font-size:12px;font-weight:600;opacity:.85}
+  .cg-wrap coords.ranks{left:0;top:0;width:12.5%;height:100%}
+  .cg-wrap coords.ranks coord{flex:1 1 0;transform:none;padding:3px 0 0 4px;text-align:left}
+  .cg-wrap coords.files{left:0;bottom:0;width:100%;height:12.5%;align-items:flex-end}
+  .cg-wrap coords.files coord{flex:1 1 0;transform:none;padding:0 4px 3px 0;text-align:right}
+  /* label colour follows the square it sits on: light text on dark squares, dark text on light squares.
+     The bottom-left square is dark in both orientations; ranks/files are numbered from the bottom/left
+     (white) or top/right (black), so "odd" is dark for white and "even" is dark for black. */
+  .cg-wrap.orientation-white coords coord:nth-child(even),
+  .cg-wrap.orientation-black coords coord:nth-child(odd){color:#7d6b4b}
+  .cg-wrap.orientation-white coords coord:nth-child(odd),
+  .cg-wrap.orientation-black coords coord:nth-child(even){color:#fbf3df}
+  @media(max-width:560px){.cg-wrap coords{font-size:9.5px}.cg-wrap coords.ranks coord{padding:2px 0 0 2px}.cg-wrap coords.files coord{padding:0 2px 2px 0}}
   /* chessground highlight colours (base.css only ships structure) */
   cg-board square.last-move{background-color:rgba(242,209,107,.42)}
   cg-board square.selected{background-color:rgba(242,209,107,.55)}
