@@ -19,6 +19,8 @@ Stockfish would be a stronger and faster player, and it can be capped to a human
 - **Mistakes that look human.** The model was trained on positions and plays plausible but imperfect moves, such as an odd developing move or a missed tactic. That can feel more like playing a person than a reduced-strength Stockfish.
 - **A different judge from the player.** Because the model chooses and Stockfish only evaluates, the chat can say "I played this, but Stockfish prefers that". If Stockfish chose the moves too, it would always agree with itself.
 
+The cost is speed (about 2.5 s per move instead of milliseconds). The strength labels in the UI (Casual about 1200, Normal about 1500) are rough guesses, not measured ratings.
+
 ### How the model differs from Stockfish
 
 The model is a small language model, not a chess program: 14 layers (8 short-convolution, 6 attention), hidden width 1024, about 230M parameters. Its vocabulary was extended with 2,106 chess tokens (one per from-to move, square contents, position details, 64 win-probability buckets). Each position is flattened into an 80-token prompt.
@@ -38,8 +40,6 @@ Each move takes two forward passes:
 | Cost | Fixed: one prefill (about 2.4 s on a 2-core CPU) | Scales with the time you give it |
 
 It plays natural-looking moves from experience without verifying them, while Stockfish calculates everything and has little intuition apart from its evaluation. That is also why Stockfish judges every move here: the model cannot explain or check its own choice.
-
-The cost is speed (about 2.5 s per move instead of milliseconds). The strength labels in the UI (Casual about 1200, Normal about 1500) are rough guesses, not measured ratings.
 
 Features: chessground board (lichess's), Random/White/Black, three strengths, hints, take-back, eval bar, per-game URLs (`/g/<id>`) that survive refresh, saved-games list (games older than 24h are grouped, deleted after 15 days idle), download a game as a `.json` file, delete it, or load a file back in.
 
