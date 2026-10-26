@@ -1,8 +1,8 @@
 """Facts about a whole game, computed in code so the narrator never has to guess.
 
 Everything here is derived from the move list and the per-move records the
-server keeps (rec[i] = {san, color, cp, best, loss, label}, cp = White-POV
-centipawns after the move, mate mapped to +/-10000).
+server keeps (rec[i] = {san, color, cp, best, loss, wl, label}: cp = White-POV centipawns after the
+move (mate mapped to +/-10000), loss = cp given away, wl = winning-chance points given away).
 """
 import csv
 import math
@@ -89,65 +89,83 @@ def captures(history_uci: list[str]) -> dict[str, list[str]]:
     return got
 
 
-def _win_pct(cp: float) -> float:
-    """Lichess's centipawn -> winning-chances curve (0-100) for the side whose POV cp is in."""
+def win_pct(cp: float) -> float:
+    """Lichess's centipawn -> winning-chances curve, 0-100, for the side whose POV the cp is in."""
+    if cp >= 9000:
+        return 100.0
+    if cp <= -9000:
+        return 0.0
     return 50 + 50 * (2 / (1 + math.exp(-0.00368208 * max(-1000, min(1000, cp)))) - 1)
+
+
+def verdict(cp_white: int | None, pov: int = 1) -> str:
+    """Plain-words standing from the point of view pov (+1 White, -1 Black); no numbers."""
+    if cp_white is None:
+        return "unclear"
+    d = win_pct(cp_white * pov) - 50
+    a = abs(d)
+    if a < 7:
+        return "about equal"
+    if a < 18:
+        return "slightly better" if d > 0 else "slightly worse"
+    if a < 35:
+        return "clearly better" if d > 0 else "clearly worse"
+    return "winning" if d > 0 else "lost"
+
+
+def swing(before_cp: int | None, after_cp: int | None, pov: int = 1) -> str:
+    b, a = verdict(before_cp, pov), verdict(after_cp, pov)
+    return f"stayed {a}" if a == b else f"went from {b} to {a}"
 
 
 def accuracy(rec: list[dict], color: str) -> int | None:
     """Mean per-move accuracy (lichess formula on win-% lost), 0-100."""
     vals = []
-    for i, r in enumerate(rec):
-        if r["color"] != color or r.get("cp") is None:
+    for r in rec:
+        if r["color"] != color or r.get("wl") is None:
             continue
-        sign = 1 if color == "w" else -1
-        before = rec[i - 1]["cp"] if i and rec[i - 1].get("cp") is not None else 30
-        drop = max(0, _win_pct(sign * before) - _win_pct(sign * r["cp"]))
-        vals.append(max(0, min(100, 103.1668 * math.exp(-0.04354 * drop) - 3.1669)))
+        vals.append(max(0, min(100, 103.1668 * math.exp(-0.04354 * r["wl"]) - 3.1669)))
     return round(sum(vals) / len(vals)) if vals else None
 
 
 def side_stats(rec: list[dict], color: str) -> dict | None:
-    mine = [r for r in rec if r["color"] == color and r.get("loss") is not None]
+    mine = [r for r in rec if r["color"] == color and r.get("wl") is not None]
     if not mine:
         return None
     counts = {k: sum(1 for r in mine if r["label"] == k)
-              for k in ("best", "good", "inaccuracy", "mistake", "blunder")}
-    return {"moves": len(mine), "accuracy": accuracy(rec, color), "avg_loss": round(sum(min(r["loss"], 500) for r in mine) / len(mine)),
-            **counts}
+              for k in ("best", "good", "fine", "inaccuracy", "mistake", "blunder")}
+    return {"moves": len(mine), "accuracy": accuracy(rec, color), **counts}
 
 
-def worst_moments(rec: list[dict], n: int = 3, min_loss: int = 100) -> list[tuple[int, dict]]:
-    ranked = sorted(((i, r) for i, r in enumerate(rec) if (r.get("loss") or 0) >= min_loss),
-                    key=lambda t: -t[1]["loss"])
+def worst_moments(rec: list[dict], n: int = 3, min_wl: float = 15) -> list[tuple[int, dict]]:
+    """The biggest errors of the game (mistake or worse), in move order."""
+    ranked = sorted(((i, r) for i, r in enumerate(rec)
+                     if (r.get("wl") or 0) >= min_wl or r.get("label") in ("mistake", "blunder")),
+                    key=lambda t: -t[1]["wl"])
     return sorted(ranked[:n])
 
 
-def fmt_cp(cp: int | None, pov: int = 1) -> str:
-    """Centipawns as pawns with a sign; pov=-1 flips White-POV numbers to Black's view."""
-    if cp is None:
-        return "?"
-    if abs(cp) >= 9000:
-        return "mate" if cp * pov > 0 else "-mate"
-    return f"{cp * pov / 100:+.1f}"
-
-
 def movelist(rec: list[dict], human_color: str, limit: int = 120) -> str:
-    """'1. d4 (+0.3) Nf6 (+0.2)  2. Bxf7?? (-3.1; best Nxe5) ...' — evals from the human's point of view."""
+    """'1. e4 [about equal] Qh4?? (better: e5) [winning] ...' — the bracket (the human's standing) is
+    shown only when it changes; ?! ? ?? mark inaccuracy / mistake / blunder; no numbers."""
     pov = 1 if human_color == "w" else -1
     start = max(0, len(rec) - limit)
     out = ["(earlier moves omitted)"] if start else []
+    prev = None
     for i in range(start, len(rec)):
         r = rec[i]
         if r["color"] == "w":
             out.append(f"{i // 2 + 1}.")
         elif i == start:
             out.append(f"{i // 2 + 1}...")
-        note = fmt_cp(r.get("cp"), pov)
-        mark = MARK.get(r.get("label"), "")
-        if mark and r.get("best") and r["best"] != r["san"]:
-            note += f"; best {r['best']}"
-        out.append(f"{r['san']}{mark} ({note})")
+        txt = r["san"] + MARK.get(r.get("label"), "")
+        if MARK.get(r.get("label")) and r.get("best") and r["best"] != r["san"]:
+            txt += f" (better: {r['best']})"
+        v = verdict(r.get("cp"), pov)
+        if v != prev:
+            txt += f" [{v}]"
+            prev = v
+        out.append(txt)
     return " ".join(out)
 
 
@@ -160,9 +178,18 @@ if __name__ == "__main__":      # self-check: python stats.py
     assert loose_pieces(chess.Board("4k3/8/8/8/8/3q4/8/4K3 w - - 0 1")) == [], "queen not attacked"
     assert sorted(loose_pieces(chess.Board("4k3/8/8/3r4/8/8/8/3QK3 b - - 0 1"))) == ["Black rook on d5", "White queen on d1"]
     assert captures(["e2e4", "d7d5", "e4d5"]) == {"w": ["pawn"], "b": []}
-    rec = [{"san": "e4", "color": "w", "cp": 30, "best": "e4", "loss": 0, "label": "best"},
-           {"san": "Qh4", "color": "b", "cp": 300, "best": "e5", "loss": 270, "label": "blunder"}]
+    # win curve: 40 cp is worth far less in a lopsided position than at equality
+    assert 3.4 < win_pct(0) - win_pct(-40) < 4.0 and win_pct(800) - win_pct(760) < 1.0
+    assert win_pct(10000) == 100 and win_pct(-10000) == 0
+    # plain-words verdicts, from either side
+    assert [verdict(c) for c in (0, 100, 300, 800, -100, -300, -800)] == [
+        "about equal", "slightly better", "clearly better", "winning", "slightly worse", "clearly worse", "lost"]
+    assert verdict(300, -1) == "clearly worse" and swing(0, 300, 1) == "went from about equal to clearly better"
+    assert swing(30, 20) == "stayed about equal"
+    rec = [{"san": "e4", "color": "w", "cp": 30, "best": "e4", "loss": 0, "wl": 0.0, "label": "best"},
+           {"san": "Qh4", "color": "b", "cp": 300, "best": "e5", "loss": 270, "wl": 26.0, "label": "blunder"}]
     assert side_stats(rec, "b")["blunder"] == 1 and worst_moments(rec)[0][0] == 1
     assert accuracy(rec, "w") > 95 > accuracy(rec, "b")
-    assert movelist(rec, "w") == "1. e4 (+0.3) Qh4?? (+3.0; best e5)", movelist(rec, "w")
+    ml = movelist(rec, "w"); assert ml == "1. e4 [about equal] Qh4?? (better: e5) [clearly better]", ml
+    assert not any(ch.isdigit() and "." in ml.split("]")[0] for ch in ml[:0]) and "cp" not in ml
     print("ok")

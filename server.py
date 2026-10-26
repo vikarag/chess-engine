@@ -21,8 +21,9 @@ from pydantic import BaseModel
 
 import coach
 import explain
+import mistakes
 import stats
-from stockfish import Stockfish, label_loss
+from stockfish import Stockfish, label_win_loss
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GAMES = os.path.join(HERE, "games")
@@ -34,7 +35,7 @@ os.makedirs(GAMES, exist_ok=True)
 _lock = threading.RLock()     # one engine, one Stockfish: compute is serialised
 print("[startup] starting Stockfish…", flush=True)
 JUDGE_BIN = os.path.join(HERE, "bin", "stockfish-19")           # official SF19 build, git-ignored
-JUDGE_ID = "sf19" if os.path.exists(JUDGE_BIN) else "sf16"      # recorded in game files
+JUDGE_ID = ("sf19" if os.path.exists(JUDGE_BIN) else "sf16") + "-w2"   # recorded in game files; bump to re-grade old games
 SF = Stockfish(path=JUDGE_BIN if JUDGE_ID == "sf19" else "/usr/games/stockfish",
                threads=2, hash_mb=128)                          # judge: full strength, never plays
 PLAYER = Stockfish(threads=2, hash_mb=64)         # opponent: Stockfish 16, UCI_Elo-limited, only calls play()
@@ -257,11 +258,12 @@ def _grade_move(color: str, prev: dict | None, cur: dict | None, san: str) -> di
     """Judge record for one ply: how much the mover lost versus Stockfish's best."""
     before, after = _cp(prev), _cp(cur)
     r = {"san": san, "color": color, "cp": after, "best": prev.get("best_san") if prev else None,
-         "lines": prev.get("lines", []) if prev else [], "loss": None, "label": "unknown"}
+         "lines": prev.get("lines", []) if prev else [], "loss": None, "wl": None, "label": "unknown"}
     if before is not None and after is not None:
         sign = 1 if color == "w" else -1
-        r["loss"] = int(max(0, min(sign * before, 9000) - min(sign * after, 9000)))
-        r["label"] = label_loss(r["loss"])
+        r["loss"] = int(max(0, min(sign * before, 9000) - min(sign * after, 9000)))   # cp, for the badge
+        r["wl"] = round(max(0.0, stats.win_pct(sign * before) - stats.win_pct(sign * after)), 1)
+        r["label"] = label_win_loss(r["wl"])
     return r
 
 
@@ -279,9 +281,15 @@ def _ensure_rec(g: Game) -> None:
     for u in g.history_uci[start:]:
         m = chess.Move.from_uci(u)
         san, color = b.san(m), "w" if b.turn else "b"
+        before = b.copy(stack=False)
         b.push(m)
         cur = _sf_block(b)
-        g.rec.append(_grade_move(color, prev, cur, san))
+        r = _grade_move(color, prev, cur, san)
+        # losing a piece is always worth a comment, even in a position the win-percentage already calls decided
+        if r["label"] in ("fine", "inaccuracy") and cur and cur.get("lines") and \
+                mistakes.lost_material(before, m, cur["lines"][0]["pv_san"]) >= 3:
+            r["label"] = "mistake"
+        g.rec.append(r)
         prev = cur
     g.sf, g.sf_ply = prev, n
 

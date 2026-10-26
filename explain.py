@@ -9,7 +9,7 @@ board and Stockfish output — nothing is guessed.
 import chess
 
 import stats
-from stockfish import label_loss
+from stockfish import label_win_loss
 
 VAL, NAME = stats.VAL, stats.NAME
 
@@ -24,8 +24,9 @@ def _who(color: bool) -> str:
     return "White" if color else "Black"
 
 
-def _fmt(cp, human_color: str) -> str:
-    return stats.fmt_cp(cp, 1 if human_color == "w" else -1)
+def _say(cp, human_color: str) -> str:
+    """Standing in plain words from the human's point of view (no numbers)."""
+    return stats.verdict(cp, 1 if human_color == "w" else -1) + " for the human"
 
 
 def summarize_line(board: chess.Board, sans: list[str], max_plies: int = 8) -> str:
@@ -198,8 +199,8 @@ def threats(sf, board: chess.Board, cur_sf: dict | None, human_color: str) -> st
     first = chess.Move.from_uci(ln["pv"][0])
     what = describe_move(b, first) if first in b.legal_moves else ""
     return (f"THREAT CHECK: if {_who(board.turn)} passed, {other} would play {ln['pv_san'][0]} "
-            f"(line: {summarize_line(b, ln['pv_san'])}). Eval now {_fmt(cur, human_color)}, "
-            f"with that threat executed {_fmt(after, human_color)} (human's point of view). "
+            f"(line: {summarize_line(b, ln['pv_san'])}). The position is now {_say(cur, human_color)}; "
+            f"if that threat were carried out it would be {_say(after, human_color)}. "
             + (what + "." if what else ""))
 
 
@@ -227,20 +228,24 @@ def analyze_move(sf, board: chess.Board, text: str, cur_sf: dict | None, human_c
     r = sf.analyse(b.fen(), depth=12, multipv=1)
     ln = r["lines"][0] if r["lines"] else None
     after = None if not ln else (ln["cp"] if ln["mate"] is None else (10000 if ln["mate"] > 0 else -10000))
-    out = [f"MOVE {san} (evals from the human's point of view, positive = good for the human)"]
-    out.append(f"eval after it {_fmt(after, human_color)}"
-               + (f"; the best move here is {best_san} at {_fmt(best_cp, human_color)}" if best_san else ""))
+    out = [f"MOVE {san} (standing is always from the human's point of view)"]
+    out.append(f"after it the position is {_say(after, human_color)}"
+               + (f"; the best move here is {best_san} ({_say(best_cp, human_color)})" if best_san else ""))
     if after is not None and best_cp is not None:
         sign = 1 if mover else -1
-        loss = int(max(0, min(sign * best_cp, 9000) - min(sign * after, 9000)))
-        if san == best_san:
+        wl = max(0.0, stats.win_pct(sign * best_cp) - stats.win_pct(sign * after))
+        label = label_win_loss(wl)
+        swing = stats.swing(best_cp, after, 1 if human_color == "w" else -1)
+        if san == best_san or label == "best":
             out.append("this is the best move")
         elif sign * after <= -9000:
             out.append("it walks into a forced mate")
         elif sign * best_cp >= 9000:
             out.append("it gives up a forced mate")
+        elif label in ("good", "fine"):
+            out.append(f"it is a {label} alternative that gives up almost nothing (the standing {swing})")
         else:
-            out.append(f"it costs {loss} cp compared with the best move ({label_loss(loss)})")
+            out.append(f"it is an {label} compared with the best move (the standing {swing})")
     if ln:
         out.append(f"expected continuation: {summarize_line(b, ln['pv_san'])}")
     out.append(f"what the move itself does: {what}")

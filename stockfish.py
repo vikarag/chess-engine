@@ -141,12 +141,16 @@ def _pv_san(board: chess.Board, pv: list[str]) -> list[str]:
     return out
 
 
-def label_loss(loss: float) -> str:
-    """Label a move by centipawn loss for the side that moved."""
-    if loss < 10:
+def label_win_loss(wl: float) -> str:
+    """Label a move by the winning chances (percentage points, mover's point of view) it gave away.
+    About 11 cp near equality is 1 point, and the same cp is worth less in a lopsided position.
+    best <1, good <4, fine <8 (not worth a comment), inaccuracy <15, mistake <25, blunder beyond."""
+    if wl < 1:
         return "best"
-    if loss < 25:
+    if wl < 4:
         return "good"
-    if loss < 60:
+    if wl < 8:
+        return "fine"
+    if wl < 15:
         return "inaccuracy"
-    return "mistake" if loss < 150 else "blunder"
+    return "mistake" if wl < 25 else "blunder"

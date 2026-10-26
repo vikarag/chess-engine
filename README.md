@@ -12,11 +12,13 @@ Earlier versions used the small LFM2.5-230M-Chess language model as the opponent
 | **judges** | evals, best lines, grades every move (yours and the opponent's), hints | a separate full-strength Stockfish (depth 12, 3 lines) |
 | **talks** | coaching comments, whole-game stats, explanations of *why* | any OpenAI-compatible LLM via OpenRouter, handed only computed facts |
 
-The judge never plays and the player never analyses, so every grade ("this cost 90 cp, the better move was c3") comes from a stronger, independent analysis than the one that chose the opponent's move.
+The judge never plays and the player never analyses, so every grade comes from a stronger, independent analysis than the one that chose the opponent's move.
 
-**The commentator is a separate coach, not the opponent.** It speaks professionally and supportively, focuses on *your* moves and position, refers to the opponent in the third person ("Black's Nd7"), and never claims to know the opponent's intentions. It presents the analysis as its own judgement ("I would prefer c3") and does not volunteer that Stockfish produced it, but it answers truthfully if you ask. It writes evaluations from your point of view with a plain-words verdict ("slightly worse for you") so a number's sign cannot be misread.
+**How moves are graded.** A move is rated by how many points of *winning chances* it gives away (lichess's centipawn-to-win-probability curve), not by raw centipawns, so the same slip counts for less when the game is already decided: best (<1), good (<4), fine (<8), inaccuracy (<15), mistake (<25), blunder. A move that lets the opponent win a piece is rated at least a mistake even in a lopsided position. "Fine" exists so the commentator stays quiet about small differences that are within the judge's own depth-to-depth wobble.
 
-**What the commentator knows.** Each ply gets a record (eval, best move, centipawn loss, label). From those, code computes the opening name, game phase, accuracy and average loss per side, the biggest mistakes, captures, loose pieces and the annotated move list, and passes them to the LLM with strict "cite only the brief" rules. The last move of each side is also described explicitly in code ("Black's knight moves from b8 to c6: develops the knight; attacks the white pawn on d4 (defended) and the white pawn on e5 (defended)"): colour, piece, squares, captures, checks, what it attacks (defended or undefended), what it defends, development, castling and centre pawns. The LLM is told to describe moves only from these lines, so it does not have to guess what a move does.
+**The commentator is a separate coach, not the opponent.** It speaks professionally and supportively, focuses on *your* moves and position, refers to the opponent in the third person ("Black's Nd7"), and never claims to know the opponent's intentions. It presents the analysis as its own judgement ("I would prefer c3") and does not volunteer that Stockfish produced it, but it answers truthfully if you ask. It talks in words, not numbers ("slightly worse", "clearly better", "a piece down"); centipawns only appear in the small grade badge. It comments only on moves rated inaccuracy or worse, and for those it names the type of mistake (walked into mate, hanging piece, undefended pawn, allowed a tactic, missed a chance, king safety, development, or plainly positional), explains the concrete consequence and the better move, and ends with the habit that prevents it.
+
+**What the commentator knows.** Each ply gets a record (eval, best move, winning chances lost, label). From those, code computes the opening name, game phase, accuracy per side, the biggest mistakes, captures, loose pieces and the annotated move list, and passes them to the LLM with strict "cite only the brief" rules. The last move of each side is also described explicitly in code ("Black's knight moves from b8 to c6: develops the knight; attacks the white pawn on d4 (defended) and the white pawn on e5 (defended)"): colour, piece, squares, captures, checks, what it attacks (defended or undefended), what it defends, development, castling and centre pawns. The LLM is told to describe moves only from these lines, so it does not have to guess what a move does.
 
 **Why a move was played.** Stockfish gives numbers and lines, not reasons, so "why" is built from them: what the expected line wins or loses, tactical patterns the move creates (fork, pin, discovered attack, piece left en prise, piece defended or attacked), the gap to other candidate moves, and what the opponent would do if the side to move passed. When one of your moves is rated an inaccuracy, mistake or blunder, the commentator is handed a "why it was weak" section (the opponent's best reply described move by move, whether material is lost or the cost is only positional, what the move gave away, and what the better move does instead) and is required to explain it, not just quote the rating. The LLM can also call three tools that run the judge: `analyze_move` ("what if I play X?", "why not X?"), `explain_past_move` (why an earlier move was weak) and `get_threats`. If the real reason is positional and no pattern applies, it is told to say so rather than invent one.
 
@@ -48,13 +50,14 @@ server.py     FastAPI app, game storage (games/<id>.json), per-move judge record
 stockfish.py  UCI wrapper: analyse() for the judge, play() for the limited-strength player
 stats.py      whole-game facts: opening, phase, accuracy, key mistakes, annotated move list
 explain.py    "why" facts: line summaries, tactical patterns, threat check, what-if analysis
+mistakes.py   names the type of a weak move from board logic, with the habit that prevents it
 coach.py      the commentator's brief, streaming, tool calls, offline fallback
 trace.py      prints the brief the commentator receives for the newest game
 static/       single-file UI + vendored chessground
 data/openings the lichess opening table (CC0)
 ```
 
-`python stats.py` and `python explain.py` run small self-checks (no engine needed).
+`python stats.py`, `python explain.py` and `python mistakes.py` run small self-checks (no engine needed).
 
 ## Licenses
 

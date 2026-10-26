@@ -115,6 +115,7 @@
   .send input{flex:1;min-width:0}
   .grade{font-size:12.5px;padding:2px 8px;border-radius:999px;border:1px solid}
   .g-best,.g-good{color:#7dd3a0;border-color:#2e5b45;background:#1c2f26}
+  .g-fine{color:#a9b6c7;border-color:#3a4454;background:#202836}
   .g-inaccuracy{color:#e0b256;border-color:#5a4a24;background:#2b2416}
   .g-mistake,.g-blunder{color:#e0736b;border-color:#5c302c;background:#2e1c1a}
   .overlay{position:fixed;inset:0;background:rgba(8,10,14,.72);display:none;align-items:center;justify-content:center;z-index:50}
@@ -504,7 +505,7 @@ function maybeAutoComment(){
   if (!$('#chatty').checked || !S.engine || S.over) return;
   const g = S.grade;
   ask(g && g.san
-    ? `Comment on my last move (${g.san}) and where I stand now, in two to four sentences. If it was an inaccuracy, mistake or blunder, say why it was weak. Say very little about the opponent's reply.`
+    ? `Comment on my last move (${g.san}) and where I stand now, in one to four sentences. Only if it was an inaccuracy, mistake or blunder, explain why and what habit would prevent it; if it was fine or good, say so in a few words and give one idea for my next move. Say very little about the opponent's reply.`
     : `The opponent just played ${S.engine.san}. Comment on it in one short sentence.`, true);
 }
 
