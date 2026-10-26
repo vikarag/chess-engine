@@ -12,6 +12,15 @@ Three layers, each doing one job:
 
 The 230M model cannot chat (it only emits chess tokens), so the narrator is a separate LLM and is told to cite only the analysis brief it is given.
 
+## Why let a 230M model pick the moves?
+
+Stockfish would be a stronger and faster player, and it can be capped to a human rating (`UCI_Elo`). Using the small model instead is a deliberate trade:
+
+- **Mistakes that look human.** The model was trained on positions and plays plausible but imperfect moves, such as an odd developing move or a missed tactic. That can feel more like playing a person than a reduced-strength Stockfish.
+- **A different judge from the player.** Because the model chooses and Stockfish only evaluates, the chat can say "I played this, but Stockfish prefers that". If Stockfish chose the moves too, it would always agree with itself.
+
+The cost is speed (about 2.5 s per move instead of milliseconds). The strength labels in the UI (Casual about 1200, Normal about 1500) are rough guesses, not measured ratings.
+
 Features: chessground board (lichess's), Random/White/Black, three strengths, hints, take-back, eval bar, per-game URLs (`/g/<id>`) that survive refresh, saved-games list (games older than 24h are grouped, deleted after 15 days idle), download a game as a `.json` file, delete it, or load a file back in.
 
 ## Run
