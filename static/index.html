@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <title>Chess — play &amp; talk</title>
 <link rel="stylesheet" href="/static/vendor/chessground.base.css">
 <link rel="stylesheet" href="/static/vendor/chessground.brown.css">
@@ -33,6 +34,7 @@
   /* ---- board ---- */
   .boardbox{display:flex;gap:10px;align-items:stretch}
   .evalbar{width:14px;border-radius:7px;background:#dfe3d5;overflow:hidden;position:relative;flex:0 0 14px}
+  .boardbox.noeval .evalbar{display:none}
   .evalbar .fill{position:absolute;left:0;right:0;top:0;background:#2b3442;transition:height .35s ease}
   .boardwrap{flex:1;min-width:0}
 
@@ -194,6 +196,9 @@
           <span class="grow"></span>
           <label class="sub" style="display:flex;gap:6px;align-items:center;cursor:pointer">
             <input type="checkbox" id="chatty" checked style="width:auto"> auto-comment
+          </label>
+          <label class="sub" style="display:flex;gap:6px;align-items:center;cursor:pointer">
+            <input type="checkbox" id="evalon" checked style="width:auto"> eval bar
           </label>
         </div>
       </div>
@@ -547,6 +552,10 @@ $('#send').onclick = () => {
 $('#chatinput').addEventListener('keydown', e => { if (e.key === 'Enter') $('#send').click(); });
 
 $('#newgame').onclick = createGame;
+// eval bar on/off, remembered per browser
+function setEvalBar(on){ document.querySelector('.boardbox').classList.toggle('noeval', !on); $('#evalon').checked = on; }
+try { setEvalBar(localStorage.getItem('evalbar') !== 'off'); } catch (e) {}
+$('#evalon').onchange = e => { setEvalBar(e.target.checked); try { localStorage.setItem('evalbar', e.target.checked ? 'on' : 'off'); } catch (e) {} };
 $('#moves').onclick = e => { const b = e.target.closest('.mv'); if (b) viewPly(+b.dataset.ply); };
 $('#backlive').onclick = () => { syncBoard(); renderPanels(); };
 $('#elo').oninput = e => $('#elov').textContent = e.target.value;
