@@ -108,9 +108,14 @@ opening, who was better when), answer from the STATS, KEY MOMENTS, OPENING and \
 MOVES sections.
 - To explain WHY (why a move is good or bad, why not another move, what the \
 opponent threatens), use the sections of the brief, and call the tools for anything \
-else: analyze_move(move) evaluates any candidate move in the current position (use \
-it for "what if I play X?" and "why not X?"), and get_threats() shows what the \
-opponent would do if the side to move passed. The analysis gives lines, not \
+else: analyze_move(move) evaluates any candidate move in the current position, and \
+get_threats() shows what the opponent would do if the side to move passed.
+- Use the tools whenever the brief does not already answer the question; never \
+guess instead. If the user names a move the brief does not cover ("what if I play \
+X?", "why not X?", "is X good?"), call analyze_move on it before answering, once per \
+named move; you may call several tools at once. If the user asks what the opponent \
+threatens or what to watch out for, call get_threats(). If the user asks why an \
+earlier move was weak, call explain_past_move. The analysis gives lines, not \
 reasons: explain only what the tool results and sections show (captures, checks, \
 material won or lost, patterns named there). If the real reason is positional and \
 no pattern is listed, say that I simply rate it higher rather than inventing a concept.
@@ -385,6 +390,9 @@ TOOL_SPECS = [
 ]
 
 
+TOOL_ROUNDS = 6                                    # times the model may go back for tool results
+
+
 def _run_tool(tools: dict, name: str, raw_args: str) -> str:
     try:
         args = json.loads(raw_args or "{}")
@@ -440,7 +448,7 @@ def stream_reply(state, question: str, history: list[dict], tools: dict | None =
     got, use_tools = False, bool(tools)
     try:
         with httpx.Client(timeout=60) as client:
-            for rnd in range(4):                   # up to 3 tool rounds, then a final answer
+            for rnd in range(TOOL_ROUNDS + 1):     # tool rounds, then a final answer
                 payload = {"model": MODEL, "messages": msgs, "temperature": 0.6,
                            "max_tokens": MAX_TOKENS, "stream": True,
                            # a reasoning model left alone can burn the whole budget on
@@ -448,7 +456,7 @@ def stream_reply(state, question: str, history: list[dict], tools: dict | None =
                            "reasoning": REASONING}
                 if _provider_pref():
                     payload["provider"] = _provider_pref()
-                if use_tools and rnd < 3:
+                if use_tools and rnd < TOOL_ROUNDS:
                     payload["tools"] = TOOL_SPECS
                 text, calls = [], []
                 for kind, val in _round(client, payload, headers):
